@@ -38,12 +38,12 @@
 - [x] 아직 리서치 안 된(`pending`) 섹션이 있으면 조립 결과에 명시적으로 표시 (누락 아님을 알 수 있게)
 
 ## Phase 6 — MCP 서버 (server.py)
-- [ ] `mcp_server/schemas.py`: `generate_toc`, `research_section`, `build_study_document`, `quick_search` 입출력 pydantic 스키마 (DESIGN.md 7장)
-- [ ] 4개 tool 등록 및 핸들러 연결 (stdio transport, `mcp` Python SDK)
-- [ ] `build_study_document`: TOC 없으면 `generate_toc` 먼저 호출 → `sections_filter` 또는 전체 미완료 섹션 순회하며 `research_section` 호출 → `assemble` 호출
-- [ ] `build_study_document` 진행 중 섹션마다 progress notification 전송 ("N/총 섹션 완료: <제목>")
-- [ ] 에러 처리: SearXNG 연결 실패, LLM API 키 누락/오류, 잘못된 `section_id`, 타임아웃 — 명확한 에러 메시지로 반환
-- [ ] 서버 단독 실행 스모크 테스트 (stdio로 tool list 조회 확인)
+- [x] `mcp_server/schemas.py`: `generate_toc`, `research_section`, `build_study_document`, `quick_search` 입출력 pydantic 스키마 (DESIGN.md 7장)
+- [x] 4개 tool 등록 및 핸들러 연결 (stdio transport, `mcp` Python SDK)
+- [x] `build_study_document`: TOC 없으면 `generate_toc` 먼저 호출 → `sections_filter` 또는 전체 미완료 섹션 순회하며 `research_section` 호출 → `assemble` 호출
+- [x] `build_study_document` 진행 중 섹션마다 progress notification 전송 ("N/총 섹션 완료: <제목>")
+- [x] 에러 처리: SearXNG 연결 실패, LLM API 키 누락/오류, 잘못된 `section_id`, 타임아웃 — 명확한 에러 메시지로 반환
+- [x] 서버 단독 실행 스모크 테스트 (stdio로 tool list 조회 확인)
 
 ## Phase 7 — 클라이언트 연동 설정
 - [ ] Claude Code용 `.mcp.json` 예시 파일 작성
