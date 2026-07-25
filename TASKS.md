@@ -20,10 +20,10 @@
 - [x] 섹션 id → 파일명 매핑 함수 (`sections/01-<slug>.md` 형식)
 
 ## Phase 3 — 목차 생성 (toc.py, `generate_toc` 도구)
-- [ ] LLM 호출로 주제 → 목차(섹션 + 하위섹션 + 설명) 생성 로직
-- [ ] `depth`(standard/deep), `num_sections` 힌트 반영
-- [ ] 결과를 `toc.json`(구조화) + `toc.md`(가독용)로 저장
-- [ ] `manifest.json`에 섹션 목록을 `pending` 상태로 초기화
+- [x] LLM 호출로 주제 → 목차(섹션 + 하위섹션 + 설명) 생성 로직
+- [x] `depth`(standard/deep), `num_sections` 힌트 반영
+- [x] 결과를 `toc.json`(구조화) + `toc.md`(가독용)로 저장
+- [x] `manifest.json`에 섹션 목록을 `pending` 상태로 초기화
 
 ## Phase 4 — 섹션별 심화 리서치 (research.py, `research_section` 도구)
 - [ ] `config.py`: `.env` 로드, 필수 값(`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, `SEARXNG_URL`) 검증
