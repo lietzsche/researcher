@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import httpx
@@ -5,18 +6,57 @@ import pytest
 import respx
 
 from mcp_server.config import Settings, load_settings
-from mcp_server.research import quick_search, research_section
+from mcp_server.research import (
+    _configure_gpt_researcher,
+    quick_search,
+    research_section,
+)
 from mcp_server.storage import OutputStorage
 
 
 def test_config_requires_an_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setenv("RETRIEVER", "searxng")
     monkeypatch.setenv("SEARXNG_URL", "http://localhost:8080")
 
-    with pytest.raises(ValueError, match="ANTHROPIC_API_KEY or OPENAI_API_KEY"):
+    with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
         load_settings()
+
+
+def test_config_accepts_deepseek_key_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    monkeypatch.setenv("RETRIEVER", "searxng")
+    monkeypatch.setenv("SEARXNG_URL", "http://localhost:8080")
+    monkeypatch.delenv("FAST_LLM", raising=False)
+    monkeypatch.delenv("SMART_LLM", raising=False)
+    monkeypatch.delenv("STRATEGIC_LLM", raising=False)
+
+    settings = load_settings()
+
+    assert settings.deepseek_api_key == "test-deepseek-key"
+    assert settings.fast_llm == "deepseek:deepseek-chat"
+    assert settings.smart_llm == "deepseek:deepseek-chat"
+    assert settings.strategic_llm == "deepseek:deepseek-reasoner"
+
+
+def test_configure_gpt_researcher_uses_native_deepseek_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    settings = Settings(deepseek_api_key="test-deepseek-key")
+
+    _configure_gpt_researcher(settings)
+
+    assert settings.fast_llm == "deepseek:deepseek-chat"
+    assert settings.smart_llm == "deepseek:deepseek-chat"
+    assert settings.strategic_llm == "deepseek:deepseek-reasoner"
+    assert os.environ["DEEPSEEK_API_KEY"] == "test-deepseek-key"
 
 
 @respx.mock
