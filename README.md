@@ -23,6 +23,10 @@ curl 'http://localhost:8080/search?q=test&format=json'
 때는 `.env.example`처럼 API 키뿐 아니라 세 LLM 모델 값도 해당
 프로바이더로 함께 변경합니다.
 
+DeepSeek가 계정별로 더 최신 모델명만 허용하는 경우 API 오류에 표시된
+지원 모델명으로 세 LLM 값을 재정의할 수 있습니다. 2026-07-26 스모크
+테스트 환경에서는 `deepseek-v4-pro`로 실제 TOC 생성이 성공했습니다.
+
 `.env`는 Git에서 제외됩니다. SearXNG는 `127.0.0.1:8080`에만
 바인딩되며 MCP 서버는 stdio transport만 사용합니다.
 

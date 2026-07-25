@@ -74,7 +74,7 @@
 - [x] `README.md`: 요구 사항 문구를 "Anthropic 또는 OpenAI API 키"에서 "DeepSeek(기본) 또는 Anthropic/OpenAI API 키"로 갱신
 - [x] `tests/test_research.py` 등 config 검증 테스트에 DeepSeek 키만 있는 케이스 추가
 - [x] `STRATEGIC_LLM`은 `deepseek:deepseek-reasoner`, `FAST_LLM`/`SMART_LLM`은 `deepseek:deepseek-chat` 기본값으로 설정
-- [ ] 실제 `DEEPSEEK_API_KEY`로 `generate_toc` 최소 1회 실행해 정상 응답 확인 (스모크 테스트, 결과를 커밋 메시지나 PR 설명에 남길 것)
+- [x] 실제 `DEEPSEEK_API_KEY`로 `generate_toc` 최소 1회 실행해 정상 응답 확인 (2026-07-26 `deepseek:deepseek-v4-pro`, 2개 섹션 및 `toc.json`/`toc.md`/`manifest.json` 검증; 기본 모델명은 현재 API에서 v4 계열 사용 안내와 함께 400 응답)
 
 ---
 

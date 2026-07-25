@@ -14,7 +14,10 @@ from mcp_server.research import (
 from mcp_server.storage import OutputStorage
 
 
-def test_config_requires_an_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_requires_an_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -22,11 +25,12 @@ def test_config_requires_an_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SEARXNG_URL", "http://localhost:8080")
 
     with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
-        load_settings()
+        load_settings(env_file=tmp_path / "missing.env")
 
 
 def test_config_accepts_deepseek_key_only(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -37,7 +41,7 @@ def test_config_accepts_deepseek_key_only(
     monkeypatch.delenv("SMART_LLM", raising=False)
     monkeypatch.delenv("STRATEGIC_LLM", raising=False)
 
-    settings = load_settings()
+    settings = load_settings(env_file=tmp_path / "missing.env")
 
     assert settings.deepseek_api_key == "test-deepseek-key"
     assert settings.fast_llm == "deepseek:deepseek-chat"
