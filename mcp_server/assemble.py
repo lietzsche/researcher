@@ -1,0 +1,1 @@
+"""Study-document assembly."""
