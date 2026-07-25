@@ -46,10 +46,10 @@
 - [x] 서버 단독 실행 스모크 테스트 (stdio로 tool list 조회 확인)
 
 ## Phase 7 — 클라이언트 연동 설정
-- [ ] Claude Code용 `.mcp.json` 예시 파일 작성
-- [ ] Codex CLI용 `~/.codex/config.toml` 스니펫을 README/`docs/`에 예시로 포함 (실제 사용자 config는 건드리지 않음)
-- [ ] 실제 Claude Code CLI에서 `claude mcp add`로 등록 후 4개 도구 모두 호출 테스트
-- [ ] 실제 Codex CLI에서 동일 테스트
+- [x] Claude Code용 `.mcp.json` 예시 파일 작성
+- [x] Codex CLI용 `~/.codex/config.toml` 스니펫을 README/`docs/`에 예시로 포함 (실제 사용자 config는 건드리지 않음)
+- [x] 실제 Claude Code CLI에서 `claude mcp add`로 등록 후 4개 도구 모두 호출 테스트
+- [x] 실제 Codex CLI에서 동일 테스트
 
 ## Phase 8 — 테스트 & 문서
 - [ ] `tests/test_toc.py`: 목차 생성 결과 스키마 검증 (mock LLM 또는 실제 소규모 호출)

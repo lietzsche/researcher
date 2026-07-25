@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "deep-research": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "${CLAUDE_PROJECT_DIR}/mcp_server/server.py"
+      ]
+    }
+  }
+}
