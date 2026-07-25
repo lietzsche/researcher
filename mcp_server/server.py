@@ -59,7 +59,10 @@ async def generate_toc(
             topic=topic, depth=depth, num_sections=num_sections
         )
         result = await run_generate_toc(**request.model_dump())
-        return GenerateTocOutput.model_validate(result)
+        return GenerateTocOutput(
+            toc=result["toc"],
+            toc_path=result["toc_path"],
+        )
     except BaseException as exc:
         raise _tool_error("generate_toc", exc) from exc
 
@@ -75,7 +78,12 @@ async def research_section(
             topic=topic, section_id=section_id, force=force
         )
         result = await run_research_section(**request.model_dump())
-        return ResearchSectionOutput.model_validate(result)
+        return ResearchSectionOutput(
+            content_markdown=result["content_markdown"],
+            sources=result["sources"],
+            section_path=result["section_path"],
+            cached=result.get("cached", False),
+        )
     except BaseException as exc:
         raise _tool_error("research_section", exc) from exc
 

@@ -22,8 +22,11 @@ async def _default_llm(prompt: str) -> str:
     model = os.getenv("STRATEGIC_LLM") or os.getenv("SMART_LLM")
     if not model:
         raise ValueError("STRATEGIC_LLM or SMART_LLM must be configured")
+    # Project configuration follows GPT-Researcher's `provider:model` format;
+    # LiteLLM's direct API uses `provider/model`.
+    litellm_model = model.replace(":", "/", 1) if ":" in model else model
     response = await acompletion(
-        model=model,
+        model=litellm_model,
         messages=[
             {
                 "role": "system",
