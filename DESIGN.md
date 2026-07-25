@@ -144,9 +144,9 @@ outputs/
 ```
 # 기본 프로바이더: DeepSeek (비용 이유, 12장 참고)
 DEEPSEEK_API_KEY=...
-FAST_LLM=deepseek:deepseek-chat
-SMART_LLM=deepseek:deepseek-chat
-STRATEGIC_LLM=deepseek:deepseek-reasoner
+FAST_LLM=deepseek:deepseek-v4-flash
+SMART_LLM=deepseek:deepseek-v4-flash
+STRATEGIC_LLM=deepseek:deepseek-v4-pro
 
 # 대체 프로바이더 (둘 중 하나만 있어도 통과)
 # ANTHROPIC_API_KEY=...
@@ -195,9 +195,9 @@ MCP는 이미 실행 중인 에이전트(Claude Code, Codex — 각자 자기 LL
 API 키가 어차피 필요하다면, [10장](#10-리스크--트레이드오프)에서 지적한 "섹션별 독립 리서치 패스라 토큰 비용이 크다"는 리스크를 낮추기 위해 **DeepSeek**를 기본 프로바이더로 쓴다 (Anthropic/OpenAI 대비 토큰 단가가 훨씬 저렴 — 섹션 수가 많은 학습 문서 파이프라인 특성상 비용 절감 효과가 큼).
 
 - `DEEPSEEK_API_KEY` 필요 (DeepSeek 콘솔에서 발급).
-- GPT-Researcher는 `FAST_LLM`/`SMART_LLM`/`STRATEGIC_LLM`을 `provider:model` 형식 문자열로 받는다 (예: `deepseek:deepseek-chat`). LiteLLM 직접 호출 규약은 `provider/model`(슬래시)이라 헷갈리기 쉬우니 주의 — 설치된 `gpt-researcher` 버전이 실제로 `deepseek` 프로바이더 문자열을 인식하는지 **반드시 코드/문서로 검증**할 것.
+- GPT-Researcher는 `FAST_LLM`/`SMART_LLM`/`STRATEGIC_LLM`을 `provider:model` 형식 문자열로 받는다 (예: `deepseek:deepseek-v4-flash`). LiteLLM 직접 호출 규약은 `provider/model`(슬래시)이라 헷갈리기 쉬우니 주의 — 설치된 `gpt-researcher` 버전이 실제로 `deepseek` 프로바이더 문자열을 인식하는지 **반드시 코드/문서로 검증**할 것.
 - **폴백**: 만약 설치된 버전이 `deepseek:` 프로바이더를 지원하지 않으면, DeepSeek가 제공하는 OpenAI 호환 엔드포인트(`https://api.deepseek.com`)를 `openai` 프로바이더 + 커스텀 base URL(`OPENAI_API_BASE`/`OPENAI_BASE_URL`, GPT-Researcher/langchain-openai가 인식하는 이름으로) 조합으로 우회한다.
-- `STRATEGIC_LLM`(목차 설계처럼 계획 품질이 중요한 단계)은 `deepseek-reasoner`를 고려하고, `FAST_LLM`/`SMART_LLM`(섹션 요약·작성)은 `deepseek-chat`으로 비용을 더 아낀다.
+- `STRATEGIC_LLM`(목차 설계처럼 계획 품질이 중요한 단계)은 `deepseek-v4-pro`, `FAST_LLM`/`SMART_LLM`(섹션 요약·작성)은 `deepseek-v4-flash`를 사용한다. 두 모델 모두 2026-07-26 실제 API 호출로 검증했다.
 - 품질 트레이드오프: DeepSeek는 Claude/GPT 대비 저렴하지만 계획 수립(TOC 설계) 품질이 다를 수 있음 — 실사용 검증(11장 하단 체크리스트) 단계에서 목차 품질을 특별히 확인해야 한다.
 - Anthropic/OpenAI 키도 계속 대체 옵션으로 지원한다 (`config.py`가 `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`DEEPSEEK_API_KEY` 중 하나만 있어도 통과하도록).
 

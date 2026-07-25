@@ -44,9 +44,9 @@ def test_config_accepts_deepseek_key_only(
     settings = load_settings(env_file=tmp_path / "missing.env")
 
     assert settings.deepseek_api_key == "test-deepseek-key"
-    assert settings.fast_llm == "deepseek:deepseek-chat"
-    assert settings.smart_llm == "deepseek:deepseek-chat"
-    assert settings.strategic_llm == "deepseek:deepseek-reasoner"
+    assert settings.fast_llm == "deepseek:deepseek-v4-flash"
+    assert settings.smart_llm == "deepseek:deepseek-v4-flash"
+    assert settings.strategic_llm == "deepseek:deepseek-v4-pro"
 
 
 def test_configure_gpt_researcher_uses_native_deepseek_provider(
@@ -57,9 +57,9 @@ def test_configure_gpt_researcher_uses_native_deepseek_provider(
 
     _configure_gpt_researcher(settings)
 
-    assert settings.fast_llm == "deepseek:deepseek-chat"
-    assert settings.smart_llm == "deepseek:deepseek-chat"
-    assert settings.strategic_llm == "deepseek:deepseek-reasoner"
+    assert settings.fast_llm == "deepseek:deepseek-v4-flash"
+    assert settings.smart_llm == "deepseek:deepseek-v4-flash"
+    assert settings.strategic_llm == "deepseek:deepseek-v4-pro"
     assert os.environ["DEEPSEEK_API_KEY"] == "test-deepseek-key"
 
 

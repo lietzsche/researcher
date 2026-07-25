@@ -13,9 +13,9 @@ class Settings(BaseModel):
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     deepseek_api_key: str | None = None
-    fast_llm: str = "deepseek:deepseek-chat"
-    smart_llm: str = "deepseek:deepseek-chat"
-    strategic_llm: str = "deepseek:deepseek-reasoner"
+    fast_llm: str = "deepseek:deepseek-v4-flash"
+    smart_llm: str = "deepseek:deepseek-v4-flash"
+    strategic_llm: str = "deepseek:deepseek-v4-pro"
     retriever: str = "searxng"
     searxng_url: HttpUrl = HttpUrl("http://localhost:8080")
     mcp_server_name: str = "deep-research"
