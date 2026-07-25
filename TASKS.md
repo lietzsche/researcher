@@ -14,10 +14,10 @@
 - [x] `docker compose up -d` 로 기동 후 `curl 'http://localhost:8080/search?q=test&format=json'` 정상 응답 확인
 
 ## Phase 2 — 저장소 레이어 (storage.py)
-- [ ] `outputs/<topic-slug>/` 디렉터리 구조 생성 함수 (DESIGN.md 6장)
-- [ ] `manifest.json` 읽기/쓰기 (topic, created_at, depth, 섹션별 status/timestamp/source_count)
-- [ ] topic → slug 변환 함수 (파일시스템 안전한 slugify)
-- [ ] 섹션 id → 파일명 매핑 함수 (`sections/01-<slug>.md` 형식)
+- [x] `outputs/<topic-slug>/` 디렉터리 구조 생성 함수 (DESIGN.md 6장)
+- [x] `manifest.json` 읽기/쓰기 (topic, created_at, depth, 섹션별 status/timestamp/source_count)
+- [x] topic → slug 변환 함수 (파일시스템 안전한 slugify)
+- [x] 섹션 id → 파일명 매핑 함수 (`sections/01-<slug>.md` 형식)
 
 ## Phase 3 — 목차 생성 (toc.py, `generate_toc` 도구)
 - [ ] LLM 호출로 주제 → 목차(섹션 + 하위섹션 + 설명) 생성 로직
