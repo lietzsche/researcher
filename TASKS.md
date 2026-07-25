@@ -61,6 +61,21 @@
 - [x] Phase 단위(혹은 논리적 단위)로 커밋 분리, 커밋 메시지는 무엇을·왜 했는지 명확히
 - [x] `.env` 등 시크릿 파일이 커밋에 포함되지 않았는지 `git status`/`git diff --cached`로 확인 후 push
 
+## Phase 10 — DeepSeek 프로바이더 전환 (DESIGN.md 12장)
+
+> Phase 0-9는 완료됨. 이 phase는 Anthropic/OpenAI 기본값을 DeepSeek로 바꾸는 후속 변경.
+
+- [ ] 설치된 `gpt-researcher` 버전 소스/문서에서 `deepseek` 프로바이더 문자열(`deepseek:deepseek-chat` 등)이 실제로 인식되는지 확인 (LiteLLM 경유 여부 포함)
+  - [ ] 인식되면: 그대로 사용
+  - [ ] 인식되지 않으면: DeepSeek의 OpenAI 호환 엔드포인트(`https://api.deepseek.com`)로 폴백 — `openai` 프로바이더 + base URL 오버라이드 방식을 `research.py`의 `_configure_gpt_researcher`에 구현하고, 어떤 방식을 썼는지 커밋 메시지/코드 주석에 남길 것
+- [ ] `mcp_server/config.py`: `Settings`에 `deepseek_api_key` 필드 추가, `validate_provider_and_retriever`가 `anthropic_api_key`/`openai_api_key`/`deepseek_api_key` 중 하나만 있어도 통과하도록 수정
+- [ ] `load_settings()`가 `DEEPSEEK_API_KEY` 환경변수를 읽도록 수정
+- [ ] `.env.example`: DESIGN.md 8장 예시대로 DeepSeek를 기본값으로, Anthropic/OpenAI는 주석 처리된 대체 옵션으로 갱신
+- [ ] `README.md`: 요구 사항 문구를 "Anthropic 또는 OpenAI API 키"에서 "DeepSeek(기본) 또는 Anthropic/OpenAI API 키"로 갱신
+- [ ] `tests/test_research.py` 등 config 검증 테스트에 DeepSeek 키만 있는 케이스 추가
+- [ ] `STRATEGIC_LLM`은 `deepseek:deepseek-reasoner`, `FAST_LLM`/`SMART_LLM`은 `deepseek:deepseek-chat` 기본값으로 설정
+- [ ] 실제 `DEEPSEEK_API_KEY`로 `generate_toc` 최소 1회 실행해 정상 응답 확인 (스모크 테스트, 결과를 커밋 메시지나 PR 설명에 남길 것)
+
 ---
 
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)

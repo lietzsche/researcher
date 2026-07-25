@@ -142,11 +142,15 @@ outputs/
 `.env` (gitignore 처리, `.env.example`만 커밋):
 
 ```
-ANTHROPIC_API_KEY=...
-# 또는 OPENAI_API_KEY=...
-FAST_LLM=anthropic:claude-haiku-4-5-20251001
-SMART_LLM=anthropic:claude-sonnet-5
-STRATEGIC_LLM=anthropic:claude-sonnet-5
+# 기본 프로바이더: DeepSeek (비용 이유, 12장 참고)
+DEEPSEEK_API_KEY=...
+FAST_LLM=deepseek:deepseek-chat
+SMART_LLM=deepseek:deepseek-chat
+STRATEGIC_LLM=deepseek:deepseek-reasoner
+
+# 대체 프로바이더 (둘 중 하나만 있어도 통과)
+# ANTHROPIC_API_KEY=...
+# OPENAI_API_KEY=...
 
 RETRIEVER=searxng
 SEARXNG_URL=http://localhost:8080
@@ -154,6 +158,8 @@ SEARXNG_URL=http://localhost:8080
 MCP_SERVER_NAME=deep-research
 RESEARCH_OUTPUT_DIR=./outputs
 ```
+
+> `deepseek:` 프로바이더 문자열이 설치된 `gpt-researcher` 버전에서 인식되지 않으면 12장의 OpenAI 호환 폴백을 사용한다.
 
 ## 9. 클라이언트 연동
 
@@ -174,11 +180,28 @@ args = ["/path/to/researcher/mcp_server/server.py"]
 
 - **섹션 간 중복/일관성**: 섹션을 독립적으로 리서치하면 서로 겹치거나 용어가 어긋날 수 있음 → `research_section`에 형제 섹션 컨텍스트를 반드시 전달, 추후 필요시 "일관성 검토 패스" 추가 고려.
 - **장시간 실행**: `build_study_document`는 섹션 수만큼 리서치가 누적되어 수십 분 걸릴 수 있음 → progress notification + 섹션별 중간 저장(중단돼도 완료된 섹션은 남음)으로 완화.
-- **API 비용**: 섹션마다 별도 리서치 패스라 토큰 비용이 단일 리포트 방식보다 큼 → `depth`/`num_sections`로 사용자가 예산 조절.
+- **API 비용**: 섹션마다 별도 리서치 패스라 토큰 비용이 단일 리포트 방식보다 큼 → `depth`/`num_sections`로 사용자가 예산 조절, DeepSeek 전환(12장)으로 단가 자체도 낮춤.
 - **SearXNG 크롤링 차단**: 일부 사이트가 차단할 수 있음 → GPT-Researcher의 재시도/폴백 로직 활용.
 - **동시 실행**: 1차 구현은 단순 순차 처리, 이후 필요시 섹션 병렬화 고려.
 
-## 11. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
+## 11. MCP와 LLM API 키의 관계 (자주 헷갈리는 부분)
+
+> "MCP로 붙이면 Claude Code/Codex가 이미 쓰고 있는 LLM을 그대로 쓰는 거 아닌가?" — 아니다.
+
+MCP는 이미 실행 중인 에이전트(Claude Code, Codex — 각자 자기 LLM 세션을 갖고 있음)와 **도구 서버** 사이의 호출 규약일 뿐이다. `build_study_document` 같은 도구를 호출하면, MCP 서버 프로세스 안에서 GPT-Researcher가 **자신만의 독립적인 다단계 LLM 호출**(검색어 계획 수립 → 소스 요약 → 섹션 본문 작성)을 수행한다. 이 호출은 클라이언트(Claude Code/Codex)의 LLM 세션을 거치지 않고 서버가 직접 LLM API를 때린다. 즉 **어떤 클라이언트로 붙이든 서버 프로세스 자체의 LLM 자격증명이 별도로 필요**하다 — MCP 프로토콜이 이 비용/키를 없애주지 않는다.
+
+## 12. LLM 프로바이더: DeepSeek로 전환
+
+API 키가 어차피 필요하다면, [10장](#10-리스크--트레이드오프)에서 지적한 "섹션별 독립 리서치 패스라 토큰 비용이 크다"는 리스크를 낮추기 위해 **DeepSeek**를 기본 프로바이더로 쓴다 (Anthropic/OpenAI 대비 토큰 단가가 훨씬 저렴 — 섹션 수가 많은 학습 문서 파이프라인 특성상 비용 절감 효과가 큼).
+
+- `DEEPSEEK_API_KEY` 필요 (DeepSeek 콘솔에서 발급).
+- GPT-Researcher는 `FAST_LLM`/`SMART_LLM`/`STRATEGIC_LLM`을 `provider:model` 형식 문자열로 받는다 (예: `deepseek:deepseek-chat`). LiteLLM 직접 호출 규약은 `provider/model`(슬래시)이라 헷갈리기 쉬우니 주의 — 설치된 `gpt-researcher` 버전이 실제로 `deepseek` 프로바이더 문자열을 인식하는지 **반드시 코드/문서로 검증**할 것.
+- **폴백**: 만약 설치된 버전이 `deepseek:` 프로바이더를 지원하지 않으면, DeepSeek가 제공하는 OpenAI 호환 엔드포인트(`https://api.deepseek.com`)를 `openai` 프로바이더 + 커스텀 base URL(`OPENAI_API_BASE`/`OPENAI_BASE_URL`, GPT-Researcher/langchain-openai가 인식하는 이름으로) 조합으로 우회한다.
+- `STRATEGIC_LLM`(목차 설계처럼 계획 품질이 중요한 단계)은 `deepseek-reasoner`를 고려하고, `FAST_LLM`/`SMART_LLM`(섹션 요약·작성)은 `deepseek-chat`으로 비용을 더 아낀다.
+- 품질 트레이드오프: DeepSeek는 Claude/GPT 대비 저렴하지만 계획 수립(TOC 설계) 품질이 다를 수 있음 — 실사용 검증(11장 하단 체크리스트) 단계에서 목차 품질을 특별히 확인해야 한다.
+- Anthropic/OpenAI 키도 계속 대체 옵션으로 지원한다 (`config.py`가 `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`DEEPSEEK_API_KEY` 중 하나만 있어도 통과하도록).
+
+## 13. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
 
 - 구현 완료 후 코드 리뷰 (`/code-review`).
 - `docs/setup.md` 사용법 문서 작성.
