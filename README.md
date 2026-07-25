@@ -6,7 +6,8 @@ SearXNG로 독립 리서치해, 재사용 가능한 섹션 파일과 하나의 �
 
 ## 설치 및 실행 개요
 
-요구 사항은 Python 3.12, Docker Compose, Anthropic 또는 OpenAI API 키입니다.
+요구 사항은 Python 3.12, Docker Compose, DeepSeek API 키(기본) 또는
+Anthropic/OpenAI API 키입니다.
 
 ```bash
 python3.12 -m venv .venv
@@ -16,6 +17,11 @@ cp .env.example .env
 docker compose up -d
 curl 'http://localhost:8080/search?q=test&format=json'
 ```
+
+기본 모델은 `deepseek-chat`(빠른 처리·본문 작성)과
+`deepseek-reasoner`(목차 설계)입니다. Anthropic/OpenAI를 대신 사용할
+때는 `.env.example`처럼 API 키뿐 아니라 세 LLM 모델 값도 해당
+프로바이더로 함께 변경합니다.
 
 `.env`는 Git에서 제외됩니다. SearXNG는 `127.0.0.1:8080`에만
 바인딩되며 MCP 서버는 stdio transport만 사용합니다.
