@@ -1,9 +1,11 @@
 import asyncio
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 import app.jobs as jobs_module
 from app.config import Settings
@@ -145,6 +147,13 @@ def test_all_topic_routes(api_client: tuple[TestClient, FakeQueue, Settings]) ->
     manifest = storage.load_manifest()
     manifest["study_document"] = {"path": "study_document.md"}
     storage.save_manifest(manifest)
+    first_section = manifest["sections"][0]
+    storage.write_text(
+        storage.topic_dir / first_section["path"],
+        "# Section 1\n\nBody text.\n\n## Sources\n\n"
+        "- [Example source](https://example.com/source)",
+    )
+    storage.update_section("01", status="done", source_count=1)
 
     document = client.get(f"/api/topics/{slug}/document")
     assert document.status_code == 200
@@ -156,6 +165,26 @@ def test_all_topic_routes(api_client: tuple[TestClient, FakeQueue, Settings]) ->
     assert download.content == b"# Finished document\n"
     assert download.headers["content-type"] == "text/markdown; charset=utf-8"
     assert "attachment" in download.headers["content-disposition"]
+
+    markdown_download = client.get(f"/api/topics/{slug}/download?format=markdown")
+    assert markdown_download.content == download.content
+    assert markdown_download.headers["content-type"] == download.headers["content-type"]
+
+    excel_download = client.get(f"/api/topics/{slug}/download?format=excel")
+    assert excel_download.status_code == 200
+    assert excel_download.headers["content-type"] == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert f'filename="{slug}.xlsx"' in excel_download.headers["content-disposition"]
+    workbook = load_workbook(BytesIO(excel_download.content))
+    assert workbook.sheetnames == ["목차", "본문", "출처"]
+    assert workbook["목차"]["B2"].value == "Section 1"
+    assert "Body text." in workbook["본문"]["C2"].value
+    assert workbook["본문"]["C2"].alignment.wrap_text is True
+    assert workbook["출처"]["B2"].value == "Example source"
+    assert workbook["출처"]["C2"].value == "https://example.com/source"
+
+    assert client.get(f"/api/topics/{slug}/download?format=pdf").status_code == 422
 
     deleted = client.delete(f"/api/topics/{slug}")
     assert deleted.status_code == 204

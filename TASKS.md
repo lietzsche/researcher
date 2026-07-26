@@ -252,11 +252,11 @@
 - [x] 백엔드 변경 없음 — 새 API 만들지 말 것 (기존 두 엔드포인트로 충분).
 
 ### 17.4 다운로드 엑셀 옵션 (DESIGN.md §20.4)
-- [ ] `pyproject.toml`에 `openpyxl` 의존성 추가.
-- [ ] `app/export.py` 신규: `build_excel_workbook(topic, storage) -> BytesIO` — 시트 "목차"(id/제목/설명), "본문"(id/제목/본문 텍스트, wrap), "출처"(id/제목/URL, 기존 `_SOURCE_LINK` 정규식과 동일 패턴으로 섹션 파일에서 추출).
-- [ ] `app/main.py`의 `download_document`에 `format: Literal["markdown", "excel"] = "markdown"` 쿼리 파라미터 추가(기본값 유지, 하위 호환). `excel`이면 워크북을 BytesIO로 만들어 올바른 Content-Type/filename으로 응답.
-- [ ] `app/static/app.js`: 다운로드 링크가 있는 세 곳(홈 카드, 진행 화면, 문서 화면) 모두 "다운로드 (MD)"/"다운로드 (Excel)" 두 링크로 분리.
-- [ ] 테스트: `format=excel` 응답이 유효한 xlsx인지(openpyxl로 다시 읽어 시트/셀 값 검증), `format` 생략/`markdown` 시 기존 동작 그대로인지.
+- [x] `pyproject.toml`에 `openpyxl` 의존성 추가.
+- [x] `app/export.py` 신규: `build_excel_workbook(topic, storage) -> BytesIO` — 시트 "목차"(id/제목/설명), "본문"(id/제목/본문 텍스트, wrap), "출처"(id/제목/URL, 기존 `_SOURCE_LINK` 정규식과 동일 패턴으로 섹션 파일에서 추출).
+- [x] `app/main.py`의 `download_document`에 `format: Literal["markdown", "excel"] = "markdown"` 쿼리 파라미터 추가(기본값 유지, 하위 호환). `excel`이면 워크북을 BytesIO로 만들어 올바른 Content-Type/filename으로 응답.
+- [x] `app/static/app.js`: 다운로드 링크가 있는 세 곳(홈 카드, 진행 화면, 문서 화면) 모두 "다운로드 (MD)"/"다운로드 (Excel)" 두 링크로 분리.
+- [x] 테스트: `format=excel` 응답이 유효한 xlsx인지(openpyxl로 다시 읽어 시트/셀 값 검증), `format` 생략/`markdown` 시 기존 동작 그대로인지.
 
 ### 17.5 섹션 리서치 병렬화 (DESIGN.md §20.5)
 - [ ] `app/config.py`에 `max_concurrent_research: int = 2`(env `MAX_CONCURRENT_RESEARCH`, 1~5 검증) 추가.

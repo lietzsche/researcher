@@ -8,15 +8,21 @@ import shutil
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from app.config import Settings, load_settings
+from app.export import build_excel_workbook
 from app.jobs import SerialJobQueue
 from app.logs import InMemoryLogHandler
 from app.schemas import GenerateTocInput
@@ -321,10 +327,25 @@ def create_app(
         )
 
     @application.get("/api/topics/{slug}/download")
-    async def download_document(slug: str, request: Request) -> FileResponse:
+    async def download_document(
+        slug: str,
+        request: Request,
+        format: Literal["markdown", "excel"] = "markdown",
+    ) -> Response:
         storage = _topic_storage(_settings(request), slug)
         if not storage.study_document_path.is_file():
             raise HTTPException(status_code=404, detail="Study document not found")
+        if format == "excel":
+            return StreamingResponse(
+                build_excel_workbook(storage.topic, storage),
+                media_type=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                headers={
+                    "Content-Disposition": f'attachment; filename="{slug}.xlsx"'
+                },
+            )
         return FileResponse(
             storage.study_document_path,
             media_type="text/markdown; charset=utf-8",
