@@ -5,13 +5,13 @@ import httpx
 import pytest
 import respx
 
-from mcp_server.config import Settings, load_settings
-from mcp_server.research import (
+from app.config import Settings, load_settings
+from app.research import (
     _configure_gpt_researcher,
     quick_search,
     research_section,
 )
-from mcp_server.storage import OutputStorage
+from app.storage import OutputStorage
 
 
 def test_config_requires_an_api_key(

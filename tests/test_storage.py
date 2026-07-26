@@ -1,4 +1,4 @@
-from mcp_server.storage import slugify
+from app.storage import slugify
 
 
 def test_slugify_keeps_non_latin_scripts_readable() -> None:

@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from mcp_server.schemas import GenerateTocOutput
-from mcp_server.toc import generate_toc
+from app.schemas import GenerateTocOutput
+from app.toc import generate_toc
 
 
 @pytest.mark.asyncio

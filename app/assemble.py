@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from mcp_server.storage import OutputStorage, utc_now
+from app.storage import OutputStorage, utc_now
 
 
 def assemble_study_document(

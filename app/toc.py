@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from mcp_server.storage import OutputStorage
+from app.storage import OutputStorage
 
 TocLlm = Callable[[str], str | dict[str, Any] | Awaitable[str | dict[str, Any]]]
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)

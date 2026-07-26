@@ -10,8 +10,8 @@ from typing import Any, Protocol
 
 import httpx
 
-from mcp_server.config import Settings, load_settings
-from mcp_server.storage import OutputStorage
+from app.config import Settings, load_settings
+from app.storage import OutputStorage
 
 
 class Researcher(Protocol):

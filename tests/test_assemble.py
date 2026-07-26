@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from mcp_server.assemble import assemble_study_document
-from mcp_server.storage import OutputStorage
+from app.assemble import assemble_study_document
+from app.storage import OutputStorage
 
 
 def test_assemble_marks_pending_sections(tmp_path: Path) -> None:
