@@ -163,6 +163,51 @@ def _sources_from_markdown(content: str) -> list[dict[str, str]]:
     ]
 
 
+async def _diagnose_searxng_failure(query: str, settings: Settings) -> str:
+    """Return a best-effort diagnosis from SearXNG's engine error metadata."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=settings.request_timeout_seconds
+        ) as client:
+            response = await client.get(
+                f"{str(settings.searxng_url).rstrip('/')}/search",
+                params={"q": query, "format": "json"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        unresponsive_engines = payload.get("unresponsive_engines", [])
+        if not unresponsive_engines:
+            return "응답 없는 엔진 없음 — 이 쿼리 자체에 결과가 없었을 가능성"
+
+        reasons: list[str] = []
+        blocked_count = 0
+        block_signals = {
+            "captcha",
+            "too many request",
+            "access denied",
+            "blocked",
+        }
+        for engine_name, error_text in unresponsive_engines:
+            reason = str(error_text)
+            reasons.append(f"{engine_name}: {reason}")
+            if any(signal in reason.lower() for signal in block_signals):
+                blocked_count += 1
+
+        reason_summary = "; ".join(reasons)
+        total_count = len(unresponsive_engines)
+        if blocked_count:
+            return (
+                f"봇 차단 가능성 높음 ({blocked_count}/{total_count}개 엔진): "
+                f"{reason_summary}"
+            )
+        return (
+            f"{total_count}개 엔진 응답 없음, 명확한 차단 신호는 아님: "
+            f"{reason_summary}"
+        )
+    except Exception as exc:
+        return f"진단 실패: {exc}"
+
+
 async def research_section(
     topic: str,
     section_id: str,
@@ -234,10 +279,19 @@ async def research_section(
             )
             return attempt_content, attempt_sources
 
+        searx_failure_diagnosed = False
         try:
             content, sources = await _attempt("searx")
             final_retriever = "searx"
         except Exception:
+            diagnosis = await _diagnose_searxng_failure(query, settings)
+            searx_failure_diagnosed = True
+            logger.warning(
+                "SearXNG 실패 진단 (섹션 %s, 주제 %r): %s",
+                section_id,
+                topic,
+                diagnosis,
+            )
             if not settings.fallback_retriever:
                 raise
             logger.warning(
@@ -249,6 +303,15 @@ async def research_section(
                 exc_info=True,
             )
             sources = []
+
+        if not sources and not searx_failure_diagnosed:
+            diagnosis = await _diagnose_searxng_failure(query, settings)
+            logger.warning(
+                "SearXNG 실패 진단 (섹션 %s, 주제 %r): %s",
+                section_id,
+                topic,
+                diagnosis,
+            )
 
         if not sources and settings.fallback_retriever:
             logger.warning(

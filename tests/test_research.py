@@ -10,6 +10,7 @@ import app.research as research_module
 from app.config import Settings, load_settings
 from app.research import (
     _configure_gpt_researcher,
+    _diagnose_searxng_failure,
     quick_search,
     research_section,
 )
@@ -357,6 +358,87 @@ async def test_quick_search_uses_searxng_json_api() -> None:
     }
 
 
+@respx.mock
+@pytest.mark.asyncio
+async def test_diagnose_searxng_failure_reports_no_unresponsive_engines() -> None:
+    route = respx.get("http://searx.test/search").mock(
+        return_value=httpx.Response(200, json={"unresponsive_engines": []})
+    )
+
+    diagnosis = await _diagnose_searxng_failure(
+        "test query",
+        Settings(require_api_key=False, searxng_url="http://searx.test"),
+    )
+
+    assert route.calls.last.request.url.params["q"] == "test query"
+    assert route.calls.last.request.url.params["format"] == "json"
+    assert "응답 없는 엔진 없음" in diagnosis
+    assert "결과가 없었을 가능성" in diagnosis
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_diagnose_searxng_failure_reports_bot_block_signals() -> None:
+    respx.get("http://searx.test/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "unresponsive_engines": [
+                    ["google", "CAPTCHA"],
+                    ["bing", "Too many requests"],
+                    ["duckduckgo", "Timeout"],
+                ]
+            },
+        )
+    )
+
+    diagnosis = await _diagnose_searxng_failure(
+        "test query",
+        Settings(require_api_key=False, searxng_url="http://searx.test"),
+    )
+
+    assert "봇 차단 가능성 높음" in diagnosis
+    assert "2/3개 엔진" in diagnosis
+    assert "google: CAPTCHA" in diagnosis
+    assert "bing: Too many requests" in diagnosis
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_diagnose_searxng_failure_reports_non_blocking_errors() -> None:
+    respx.get("http://searx.test/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={"unresponsive_engines": [["google", "Timeout"]]},
+        )
+    )
+
+    diagnosis = await _diagnose_searxng_failure(
+        "test query",
+        Settings(require_api_key=False, searxng_url="http://searx.test"),
+    )
+
+    assert "1개 엔진 응답 없음" in diagnosis
+    assert "명확한 차단 신호는 아님" in diagnosis
+    assert "google: Timeout" in diagnosis
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_diagnose_searxng_failure_contains_request_error() -> None:
+    respx.get("http://searx.test/search").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+
+    diagnosis = await _diagnose_searxng_failure(
+        "test query",
+        Settings(require_api_key=False, searxng_url="http://searx.test"),
+    )
+
+    assert "진단 실패" in diagnosis
+    assert "connection refused" in diagnosis
+
+
 @pytest.mark.asyncio
 async def test_research_section_passes_sibling_scope_and_caches(
     tmp_path: Path,
@@ -422,6 +504,7 @@ async def test_research_section_passes_sibling_scope_and_caches(
     assert storage.load_manifest()["sections"][0]["status"] == "done"
 
 
+@respx.mock
 @pytest.mark.asyncio
 async def test_research_section_marks_error_when_no_sources_are_found(
     tmp_path: Path,
@@ -454,7 +537,16 @@ async def test_research_section_marks_error_when_no_sources_are_found(
     storage = OutputStorage(tmp_path, "Empty Context Topic")
     storage.write_json(storage.toc_json_path, toc)
     storage.initialize_manifest(depth="standard", sections=toc)
-    settings = Settings(require_api_key=False)
+    respx.get("http://searx.test/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={"unresponsive_engines": [["google", "Timeout"]]},
+        )
+    )
+    settings = Settings(
+        require_api_key=False,
+        searxng_url="http://searx.test",
+    )
 
     result = await research_section(
         "Empty Context Topic",
@@ -471,6 +563,8 @@ async def test_research_section_marks_error_when_no_sources_are_found(
     assert "no sources" in caplog.text
     assert "section 01" in caplog.text
     assert "Empty Context Topic" in caplog.text
+    assert "SearXNG 실패 진단" in caplog.text
+    assert "명확한 차단 신호는 아님" in caplog.text
 
     # A subsequent attempt must not hit the done-section cache shortcut --
     # it should call the researcher again for a real retry.
@@ -500,13 +594,17 @@ async def test_research_section_marks_error_when_no_sources_are_found(
     assert storage.load_manifest()["sections"][0]["status"] == "done"
 
 
+@respx.mock
 @pytest.mark.asyncio
 async def test_research_section_without_fallback_propagates_searx_error(
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    expected_error = RuntimeError("SearXNG unavailable")
+
     class FailingResearcher:
         async def conduct_research(self) -> None:
-            raise RuntimeError("SearXNG unavailable")
+            raise expected_error
 
         async def write_report(self, **_kwargs: object) -> str:
             pytest.fail("report must not be written after research fails")
@@ -516,19 +614,32 @@ async def test_research_section_without_fallback_propagates_searx_error(
 
     topic = "No Fallback Exception"
     storage = _initialize_research_section(tmp_path, topic)
+    respx.get("http://searx.test/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={"unresponsive_engines": [["google", "CAPTCHA"]]},
+        )
+    )
 
-    with pytest.raises(RuntimeError, match="SearXNG unavailable"):
+    with pytest.raises(RuntimeError, match="SearXNG unavailable") as exc_info:
         await research_section(
             topic,
             "01",
             output_root=tmp_path,
-            settings=Settings(require_api_key=False),
+            settings=Settings(
+                require_api_key=False,
+                searxng_url="http://searx.test",
+            ),
             researcher_factory=lambda **_kwargs: FailingResearcher(),
         )
 
+    assert exc_info.value is expected_error
     assert storage.load_manifest()["sections"][0]["status"] == "error"
+    assert "SearXNG 실패 진단" in caplog.text
+    assert "봇 차단 가능성 높음 (1/1개 엔진)" in caplog.text
 
 
+@respx.mock
 @pytest.mark.asyncio
 async def test_research_section_falls_back_after_searx_error(
     tmp_path: Path,
@@ -570,8 +681,12 @@ async def test_research_section_falls_back_after_searx_error(
     storage = _initialize_research_section(tmp_path, topic)
     settings = Settings(
         require_api_key=False,
+        searxng_url="http://searx.test",
         fallback_retriever="tavily",
         fallback_retriever_api_key="test-tavily-key",
+    )
+    respx.get("http://searx.test/search").mock(
+        return_value=httpx.Response(200, json={"unresponsive_engines": []})
     )
 
     result = await research_section(
@@ -591,6 +706,7 @@ async def test_research_section_falls_back_after_searx_error(
     assert section["source_count"] == 1
 
 
+@respx.mock
 @pytest.mark.asyncio
 async def test_research_section_marks_error_when_both_retrievers_are_empty(
     tmp_path: Path,
@@ -615,8 +731,12 @@ async def test_research_section_marks_error_when_both_retrievers_are_empty(
     storage = _initialize_research_section(tmp_path, topic)
     settings = Settings(
         require_api_key=False,
+        searxng_url="http://searx.test",
         fallback_retriever="tavily",
         fallback_retriever_api_key="test-tavily-key",
+    )
+    respx.get("http://searx.test/search").mock(
+        return_value=httpx.Response(200, json={"unresponsive_engines": []})
     )
 
     result = await research_section(
@@ -717,6 +837,7 @@ async def test_research_section_cache_uses_manifest_path_after_title_drift(
     assert Path(result["section_path"]) == actual_path
 
 
+@respx.mock
 @pytest.mark.asyncio
 async def test_research_section_includes_output_language_in_custom_prompt(
     tmp_path: Path,
@@ -747,7 +868,11 @@ async def test_research_section_includes_output_language_in_custom_prompt(
     storage.initialize_manifest(depth="standard", sections=toc)
     settings = Settings(
         anthropic_api_key="test-key",
+        searxng_url="http://searx.test",
         output_language="Japanese",
+    )
+    respx.get("http://searx.test/search").mock(
+        return_value=httpx.Response(200, json={"unresponsive_engines": []})
     )
 
     await research_section(
