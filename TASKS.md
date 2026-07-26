@@ -197,6 +197,22 @@
 - [x] 위 확인과 별개로 [← 돌아가기]/[목차와 작업 선택]/[다운로드] 링크가 여전히 정상 동작하는지도 같이 확인
 - [x] 결과를 커밋 메시지에 남기고 push
 
+## Phase 15 — 검색/리서치 언어 강제 (DESIGN.md §18)
+
+> Phase 14 완료 후 실사용 중 발견된 이슈: 리서치 결과가 한글이어야 하는데 일부 영어로 나옴. 원인 조사는 DESIGN.md §18에 이미 끝나 있음 — `LANGUAGE` 환경변수 설정은 효과 없다는 것도 확인됐으니 그 방향으로 고치지 말 것.
+
+- [ ] `app/config.py`: `Settings`에 `research_language: str = "Korean"`(env `RESEARCH_LANGUAGE`), `searxng_language: str = "ko-KR"`(env `SEARXNG_LANGUAGE`) 필드 추가, `load_settings()`에서 env 로딩
+- [ ] `app/research.py`: `_research_query(topic, section, siblings, research_language)` — 시그니처에 `research_language` 추가하고 프롬프트 끝에 `Write all search queries and your entire response in {research_language}.` 추가
+- [ ] `app/research.py`: `research_section()`의 `write_report(custom_prompt=...)` 문자열에 `f"Write your entire response in {settings.research_language}."` 추가 (DESIGN.md §18.2 그대로) — `_research_query()` 호출부에도 `settings.research_language` 전달
+- [ ] `app/research.py`: `quick_search()`의 SearXNG 요청 파라미터에 `"language": settings.searxng_language` 추가
+- [ ] `searxng/settings.yml`: `search:` 섹션에 `default_lang: "ko-KR"` 추가, 그 위에 "이 이미지는 마운트된 settings.yml에서 환경변수 치환을 지원하지 않으니 언어를 바꾸려면 이 파일을 직접 고치고 searxng 컨테이너를 재시작해야 한다"는 주석 남길 것 (DESIGN.md §18.4)
+- [ ] `.env.example`: `RESEARCH_LANGUAGE=Korean`, `SEARXNG_LANGUAGE=ko-KR` 추가, 위와 동일한 한계(설정만으론 `searxng/settings.yml`에 자동 반영 안 됨)를 주석으로 명시
+- [ ] `tests/test_research.py`: `_research_query()`가 `research_language`를 포함하는지, `quick_search()`가 SearXNG 요청에 `language` 파라미터를 포함하는지 테스트 추가
+- [ ] config 기본값 테스트: `research_language == "Korean"`, `searxng_language == "ko-KR"`
+- [ ] 실제로 `research_section` 또는 `build_study_document`를 한글 주제로 1회 실행해 섹션 본문이 한글로 나오는지 확인 (완전히 보장되진 않는다는 걸 DESIGN.md §18.6에 이미 적어뒀으니, "이전보다 나아졌는지" 정도로 확인하고 결과를 커밋 메시지에 남길 것)
+- [ ] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마
+- [ ] 논리 단위로 커밋 나눠서 push까지
+
 ---
 
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)

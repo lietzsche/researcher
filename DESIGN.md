@@ -368,9 +368,69 @@ codex가 헷갈리지 않도록 명시적으로 나열한다.
 
 ---
 
+## 18. 검색/리서치 언어 강제 (Phase 15 구현 대상)
+
+**현상**: 리서치 결과 중 일부가 한글이 아니라 영어로 나온다.
+
+**원인 조사 (설치된 `gpt-researcher==0.15.1` 소스와 직접 확인 완료)**: 언어를 통제할 지점이 세 군데 있는데, 지금은 셋 다 아무 언어 지시도 받지 못한다.
+
+1. **검색 서브쿼리 생성**: `gpt_researcher/actions/query_processing.py`의 `generate_sub_queries()`가 쓰는 프롬프트(`generate_search_queries_prompt`, `prompts.py`)는 언어를 전혀 지시하지 않는다. 이 프롬프트에 들어가는 `task` 텍스트는 우리 `research.py`의 `_research_query()`가 만드는데, 그 템플릿 자체가 "Study topic:", "Research only section", "Section scope:" 같은 영어 스캐폴딩이 대부분이고 실제 주제/섹션명만 한글이다 — LLM이 서브쿼리를 생성할 때 템플릿의 지배적인 언어(영어)를 따라가기 쉬운 구조. 이 서브쿼리가 그대로 SearXNG에 보내지는 실제 검색어이므로, 여기서부터 영어 편향이 시작된다.
+2. **SearXNG 자체의 언어 필터**: GPT-Researcher가 내장한 `gpt_researcher/retrievers/searx/searx.py`의 `SearxSearch.search()`는 요청 파라미터를 `{'q': ..., 'format': 'json'}`으로 하드코딩하고 있어 `language` 파라미터를 보낼 방법이 없다 (라이브러리 코드라 패치 없이는 못 고침). 우리 `searxng/settings.yml`도 `search.default_lang`을 지정하지 않아 SearXNG 기본값인 `"auto"`(브라우저 `Accept-Language` 헤더로 감지)를 쓰는데, `requests`/`httpx`로 오는 API 호출엔 그런 헤더가 없어 사실상 "전체 언어 무제한 검색"이 되고 있었다.
+3. **최종 리포트 작성 언어**: GPT-Researcher는 `LANGUAGE` 환경변수(`cfg.language`, 기본값 `"english"`)로 리포트 언어를 지시하는 경로가 있지만(`gpt_researcher/actions/report_generation.py`의 `generate_report()`), 우리 `research_section()`은 항상 `custom_prompt`를 넘겨서 `write_report()`를 호출한다. `generate_report()`의 분기를 직접 읽어 확인했는데, `custom_prompt`가 있으면 `content = f"{custom_prompt}\n\nContext: {context}"`로 완전히 대체되어 **`cfg.language`가 삽입되는 코드 경로 자체를 타지 않는다** — 즉 `LANGUAGE=korean`을 설정해도 우리 파이프라인에서는 조용히 아무 효과가 없다. 결과 언어는 순전히 LLM이 컨텍스트(스크래핑된 웹 페이지가 영어면 영어)로부터 추론하는 대로 결정되고 있었다.
+
+**결론**: `LANGUAGE` 환경변수를 설정하는 "그럴듯해 보이는" 수정은 효과가 없다 (2, 3번 경로 모두 이걸 참조하지 않음). 실제 수정은 우리가 직접 통제하는 세 지점 — ①우리 프롬프트 텍스트, ②SearXNG 인스턴스 기본값, ③quick_search의 요청 파라미터 — 에서 해야 한다.
+
+**설계**: 사용자가 "한글로 강제하거나 언어를 지정"하고 싶다고 했으므로 하드코딩이 아니라 설정 가능한 값으로 만든다.
+
+### 18.1 새 설정 두 개 (`app/config.py`, `.env.example`)
+
+- `research_language: str = "Korean"` (env: `RESEARCH_LANGUAGE`) — LLM 프롬프트에 그대로 삽입할 사람이 읽는 언어 이름 ("Korean", "English", "Japanese" 등).
+- `searxng_language: str = "ko-KR"` (env: `SEARXNG_LANGUAGE`) — SearXNG의 `language` 쿼리 파라미터 및 `searxng/settings.yml`의 `default_lang`에 쓰는 ISO 코드.
+- 두 값은 서로 다른 소비자(LLM 프롬프트 vs HTTP 쿼리 파라미터)를 대상으로 하는 별개 설정이라 하나로 합치지 않는다.
+
+### 18.2 우리가 직접 만드는 프롬프트에 언어 지시 추가 (`app/research.py`)
+
+- `_research_query(topic, section, siblings, research_language)`: 함수 시그니처에 `research_language` 파라미터를 추가하고, 프롬프트 끝에 다음 줄을 추가한다.
+  ```
+  Write all search queries and your entire response in {research_language}.
+  ```
+- `research_section()`의 `write_report(custom_prompt=...)` 문자열에도 동일한 지시를 추가한다:
+  ```python
+  custom_prompt=(
+      "Write only this section's learning chapter. Respect the scope and "
+      "do not cover sibling sections except for brief cross-references. "
+      f"Write your entire response in {settings.research_language}."
+  )
+  ```
+  이게 §17의 3번(리포트 작성 언어)을 실제로 고치는 유일한 지점이다 — `LANGUAGE` 환경변수는 건드리지 않는다(효과 없음이 확인됐으므로).
+- `toc.py`의 목차 생성 프롬프트("Write in the language of the topic")는 건드리지 않는다 — 지금까지 실사용 검증(한글 주제 → 한글 목차)에서 문제가 보고된 적 없고, 주제 자체의 언어를 따라가는 유연한 동작이 오히려 맞다.
+
+### 18.3 `quick_search`에 언어 파라미터 추가 (`app/research.py`)
+
+- SearXNG 호출 시 `params={"q": query, "format": "json", "language": settings.searxng_language}`로 변경.
+
+### 18.4 SearXNG 인스턴스 기본 언어 (`searxng/settings.yml`)
+
+- `search:` 섹션에 `default_lang: "ko-KR"` 추가 (18.1의 `searxng_language` 기본값과 일치).
+- **알려진 한계 (미리 확인함)**: 이 SearXNG 이미지는 마운트된 커스텀 `settings.yml` 안에서 `${VAR}` 형태의 환경변수 치환을 지원하지 않는다 (기존에 `SEARXNG_SECRET`이 똑같은 이유로 무효였던 것과 동일한 제약, `docs/setup.md` 알려진 이슈 참고). 따라서 `SEARXNG_LANGUAGE` 환경변수를 바꿔도 이 YAML 파일엔 자동 반영되지 않는다 — 기본 언어를 바꾸려면 `searxng/settings.yml`을 직접 고치고 `searxng` 컨테이너를 재시작해야 한다. 이 사실을 코드 주석과 `docs/setup.md`에 명확히 남길 것 (미리 정직하게 밝혀서 헷갈리지 않게 함).
+- 이 설정이 GPT-Researcher 내장 검색(리서치 섹션의 실제 웹 검색)에 언어 편향을 주는 유일한 레버다 (18.2/18.3은 각각 우리 프롬프트와 quick_search에만 영향).
+
+### 18.5 테스트
+
+- `tests/test_research.py`: `_research_query()`가 `research_language`를 프롬프트에 포함하는지, `quick_search()`가 `language` 파라미터를 SearXNG 요청에 포함하는지 유닛 테스트 추가.
+- `tests/test_research.py` 또는 `test_storage.py`: config 기본값(`research_language == "Korean"`, `searxng_language == "ko-KR"`) 테스트.
+
+### 18.6 리스크
+
+- SearXNG 서브쿼리 자체의 언어는 여전히 100% 보장되지 않는다 (18.2는 LLM에게 "지시"하는 것이지 강제하는 게 아님) — 다만 지시가 전혀 없던 이전보다는 훨씬 나아짐.
+- `default_lang`을 특정 언어로 고정하면 SearXNG가 그 언어 콘텐츠가 부족한 주제에서는 검색 결과 수 자체가 줄어들 수 있음 — 사용자가 필요시 `searxng/settings.yml`을 직접 되돌리거나 다른 코드로 바꿀 수 있게 문서화.
+
+---
+
 ## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
 
 - 구현 완료 후 코드 리뷰.
 - 실사용 검증: 실제 우분투 서버(또는 동등 환경)에 `docker compose up`으로 띄우고, Quick Tunnel URL로 모바일 브라우저에서 접속해 주제 생성 → 목차 검토 → 섹션 리서치 → 다운로드 → 삭제까지 전 과정 확인.
 - `docs/setup.md`를 웹앱 배포/사용법 기준으로 재작성.
+- Phase 15(§18) 완료 후: 코드 리뷰, 실제 DeepSeek+SearXNG로 한글 주제를 리서치해 섹션 본문/출처가 한글 위주로 나오는지 실사용 검증, `docs/setup.md`에 언어 설정 안내 추가.
 - (향후, 별도 설계) 오디오 오버뷰 파이프라인.
