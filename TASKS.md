@@ -112,10 +112,10 @@
 - [x] `mcp_server/` → `app/`로 이름 변경, 패키지 내부 `from mcp_server....` import 전부 `from app....`로 갱신 (재사용 파일: `toc.py`, `research.py`, `assemble.py`, `storage.py`, `schemas.py`, `config.py`, 관련 테스트 전부)
 
 ### 12.2 config.py 정리
-- [ ] `mcp_transport`/`mcp_host`/`mcp_port`/`mcp_bearer_token`/`mcp_server_name` 필드와 관련 검증 로직 제거
-- [ ] `site_password: str | None` 필드 추가 (`SITE_PASSWORD` 환경변수에서 로드, 필수 아님 — 비어있으면 인증 없이 구동하되 시작 시 경고 로그)
-- [ ] `research_output_dir` 기본값을 컨테이너 환경에 맞게 조정 검토 (`.env.example`은 `/data/outputs` 같은 컨테이너 내부 경로 예시로)
-- [ ] DeepSeek/Anthropic/OpenAI/임베딩/gpt-researcher 버전 핀 관련 필드·검증은 전부 그대로 유지 (건드리지 말 것)
+- [x] `mcp_transport`/`mcp_host`/`mcp_port`/`mcp_bearer_token`/`mcp_server_name` 필드와 관련 검증 로직 제거
+- [x] `site_password: str | None` 필드 추가 (`SITE_PASSWORD` 환경변수에서 로드, 필수 아님 — 비어있으면 인증 없이 구동하되 시작 시 경고 로그)
+- [x] `research_output_dir` 기본값을 컨테이너 환경에 맞게 조정 검토 (`.env.example`은 `/data/outputs` 같은 컨테이너 내부 경로 예시로)
+- [x] DeepSeek/Anthropic/OpenAI/임베딩/gpt-researcher 버전 핀 관련 필드·검증은 전부 그대로 유지 (건드리지 말 것)
 
 ### 12.3 FastAPI 앱 (`app/main.py`, 신규)
 - [ ] DESIGN.md §7 표의 8개 라우트 구현: `POST /api/topics`, `GET /api/topics`, `GET /api/topics/{slug}`, `POST /api/topics/{slug}/sections/{section_id}/research`, `POST /api/topics/{slug}/build`, `GET /api/topics/{slug}/document`, `GET /api/topics/{slug}/download`, `DELETE /api/topics/{slug}`

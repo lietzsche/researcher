@@ -63,13 +63,18 @@ def test_configure_gpt_researcher_uses_native_deepseek_provider(
     assert os.environ["DEEPSEEK_API_KEY"] == "test-deepseek-key"
 
 
-def test_config_rejects_remote_transport_without_token() -> None:
-    with pytest.raises(ValueError, match="MCP_BEARER_TOKEN"):
-        Settings(
-            require_api_key=False,
-            mcp_transport="streamable-http",
-            mcp_bearer_token=None,
-        )
+def test_config_loads_optional_site_password(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SITE_PASSWORD", "test-site-password")
+
+    settings = load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    )
+
+    assert settings.site_password == "test-site-password"
 
 
 def test_configure_gpt_researcher_defaults_to_keyless_local_embedding(
