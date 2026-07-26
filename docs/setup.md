@@ -56,7 +56,7 @@ claude mcp add --scope project deep-research -- \
   "$PWD/.venv/bin/python" "$PWD/mcp_server/server.py"
 ```
 
-프로젝트에 이미 포함된 [`.mcp.json`](../.mcp.json)을 대신 사용해도 되지만, `python`이 이 프로젝트의 의존성이 설치된 인터프리터를 가리키는 경우에만 동작합니다 — 확실하지 않다면 위 `claude mcp add` 명령으로 `.venv`의 절대 경로를 직접 지정하세요.
+프로젝트에 이미 포함된 [`.mcp.json`](../.mcp.json)은 `${CLAUDE_PROJECT_DIR}/.venv/bin/python`을 직접 가리키므로, macOS/Linux/WSL에서 `.venv`를 만들어 두면 별도 설정 없이 그대로 동작합니다. Windows 네이티브에서는 venv 레이아웃이 달라(`.venv\Scripts\python.exe`) 이 기본값이 동작하지 않으니, 위 `claude mcp add` 명령으로 `.venv`의 절대 경로를 직접 지정하세요.
 
 ### Codex CLI
 
