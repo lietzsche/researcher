@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="주제별 학습 목차와 심화 리서치 문서를 만드는 개인 웹앱">
+    <title>Deep Research</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#/">Deep Research</a>
+      <nav aria-label="주요 메뉴">
+        <a href="#/">내 주제</a>
+        <a class="button button-small" href="#/new">새 주제</a>
+      </nav>
+    </header>
+    <main id="app" class="shell" aria-live="polite">
+      <section class="panel loading-panel">
+        <div class="spinner" aria-hidden="true"></div>
+        <p>불러오는 중…</p>
+      </section>
+    </main>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
