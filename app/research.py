@@ -28,6 +28,27 @@ _SOURCE_LINK = re.compile(r"^- \[(?P<title>.+?)]\((?P<url>https?://[^)]+)\)$", r
 _SEARX_REQUEST_TIMEOUT_PATCHED = False
 
 
+class _TimeoutBoundRequests:
+    """Proxy that defaults ``get`` to a timeout without touching the shared
+    ``requests`` module.
+
+    ``searx.py`` does ``import requests``, which binds the same module object
+    used by every other consumer of ``import requests`` in this process
+    (litellm, other gpt-researcher retrievers/scrapers, ...). Assigning
+    ``searx_module.requests.get = ...`` would mutate that shared object and
+    silently change timeout behavior process-wide. Rebinding the ``requests``
+    *name* inside ``searx_module`` to this proxy instead keeps the patch
+    scoped to `SearxSearch.search()`'s own calls.
+    """
+
+    def __init__(self, requests_module: Any, timeout: float) -> None:
+        self._requests_module = requests_module
+        self.get = partial(requests_module.get, timeout=timeout)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._requests_module, name)
+
+
 def _configure_gpt_researcher(settings: Settings) -> None:
     """Bridge the public config names to GPT-Researcher's environment contract."""
     global _SEARX_REQUEST_TIMEOUT_PATCHED
@@ -38,9 +59,9 @@ def _configure_gpt_researcher(settings: Settings) -> None:
         # Apply a narrow, idempotent boundary patch without replacing its
         # search behavior. This is a confirmed defect; whether it caused the
         # reported production hang remains the leading hypothesis, not proof.
-        searx_module.requests.get = partial(
-            searx_module.requests.get,
-            timeout=settings.request_timeout_seconds,
+        searx_module.requests = _TimeoutBoundRequests(
+            searx_module.requests,
+            settings.request_timeout_seconds,
         )
         _SEARX_REQUEST_TIMEOUT_PATCHED = True
 

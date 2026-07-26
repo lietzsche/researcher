@@ -141,6 +141,33 @@ def test_configure_gpt_researcher_patches_searx_timeout_once(
     assert calls == [{"timeout": 17}]
 
 
+def test_configure_gpt_researcher_does_not_patch_shared_requests_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The timeout patch must stay scoped to the SearX retriever.
+
+    ``searx.py`` does ``import requests``, which is the *same* module object
+    every other importer of ``requests`` in this process sees. Mutating
+    ``requests.get`` in place (instead of rebinding the ``requests`` name
+    inside the retriever's own module) would silently add a timeout to any
+    other unrelated ``requests.get`` call in the process.
+    """
+    import requests as real_requests
+    from gpt_researcher.retrievers.searx import searx as searx_module
+
+    original_get = real_requests.get
+    original_searx_requests = searx_module.requests
+    monkeypatch.setattr(research_module, "_SEARX_REQUEST_TIMEOUT_PATCHED", False)
+    try:
+        _configure_gpt_researcher(
+            Settings(require_api_key=False, request_timeout_seconds=17)
+        )
+        assert real_requests.get is original_get
+        assert not isinstance(real_requests.get, partial)
+    finally:
+        searx_module.requests = original_searx_requests
+
+
 def test_configure_gpt_researcher_uses_native_deepseek_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

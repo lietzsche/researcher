@@ -17,6 +17,20 @@ _SOURCE_LINK = re.compile(
     re.MULTILINE,
 )
 
+# Excel's hard per-cell character limit. openpyxl does not enforce or warn
+# about this -- it silently truncates on save -- so a thoroughly researched
+# "deep" section (which easily runs past this many characters once its
+# source list is included) would otherwise lose content with no indication.
+_EXCEL_CELL_CHAR_LIMIT = 32767
+_TRUNCATION_NOTICE = "\n\n[...이하 생략: 엑셀 셀 글자 수 제한. 전체 내용은 Markdown 다운로드 참고]"
+
+
+def _fit_cell_text(text: str) -> str:
+    if len(text) <= _EXCEL_CELL_CHAR_LIMIT:
+        return text
+    truncated_length = _EXCEL_CELL_CHAR_LIMIT - len(_TRUNCATION_NOTICE)
+    return text[:truncated_length] + _TRUNCATION_NOTICE
+
 
 def _prepare_sheet(sheet: Worksheet, headers: list[str]) -> None:
     sheet.append(headers)
@@ -57,7 +71,7 @@ def build_excel_workbook(topic: str, storage: OutputStorage) -> BytesIO:
             if state.get("status") == "done" and section_path.is_file()
             else ""
         )
-        body_sheet.append([section_id, title, content])
+        body_sheet.append([section_id, title, _fit_cell_text(content)])
         body_sheet.cell(row=body_sheet.max_row, column=3).alignment = Alignment(
             wrap_text=True,
             vertical="top",
