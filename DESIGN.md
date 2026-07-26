@@ -247,10 +247,13 @@ MCP 전용 변수(`MCP_TRANSPORT`, `MCP_HOST`, `MCP_PORT`, `MCP_BEARER_TOKEN`, `
 
 codex가 헷갈리지 않도록 명시적으로 나열한다.
 
+> **참고**: 이 전환을 설계하는 시점 직전에, 사용자가 이 대화와 별개로 `.mcp.json`/`.codex/config.toml`의 python 경로·`CLAUDE_PROJECT_DIR` 문제를 직접 고치고(`git rev-parse --show-toplevel` 기반으로 저장소 루트를 찾도록 개선), ChatGPT를 이 MCP 서버의 원격(streamable-http) 모드에 연결해보는 것까지 시도해 `docs/chatgpt-cloudflare-quick-tunnel.md`에 결과(정적 토큰만으로는 ChatGPT의 OAuth 요구사항을 못 맞춰서 완전 연동은 안 됨, 터널+토큰 자체는 curl로 정상 동작 확인됨)를 정리해뒀다. 이 전환으로 MCP 자체를 없애므로 이 최근 작업들은 전부 아래 "삭제" 대상에 포함된다 — 무의미해져서가 아니라 이 프로젝트가 더 이상 MCP 클라이언트를 대상으로 하지 않기 때문이다.
+
 **삭제**:
 - `mcp_server/server.py` (FastMCP 엔트리포인트) — `app/main.py`(FastAPI)로 대체.
 - `mcp_server/auth.py` (MCP `TokenVerifier`) — `app/main.py`의 HTTP Basic Auth로 대체.
-- `.mcp.json`, README/docs의 Claude Code/Codex MCP 등록 안내 전체.
+- `.mcp.json`, `.codex/config.toml`(및 `.gitignore`의 `.codex/*`/`!.codex/config.toml` 예외 규칙), README/docs의 Claude Code/Codex/ChatGPT MCP 등록 안내 전체.
+- `docs/chatgpt-cloudflare-quick-tunnel.md` (원격 MCP 모드 자체가 없어지므로 이 문서가 다루는 내용도 사라짐).
 - `scripts/tunnel.sh` (호스트 레벨 wrapper) — `docker-compose.yml`의 `cloudflared` 서비스로 대체.
 - `pyproject.toml`의 `mcp` 의존성.
 - `.env.example`의 `MCP_*` 변수 전부.

@@ -100,11 +100,13 @@
 ### 12.0 삭제 (DESIGN.md §15 그대로)
 - [ ] `mcp_server/server.py`, `mcp_server/auth.py` 삭제
 - [ ] `.mcp.json` 삭제
+- [ ] `.codex/config.toml` 삭제, `.gitignore`에서 `.codex/*`/`!.codex/config.toml` 예외 규칙 제거
+- [ ] `docs/chatgpt-cloudflare-quick-tunnel.md` 삭제 (원격 MCP 모드가 없어지므로 — 사용자가 최근에 직접 작성한 문서지만 MCP 자체를 걷어내는 이번 전환 범위에 포함됨, 자세한 배경은 DESIGN.md §15 참고 박스)
 - [ ] `scripts/tunnel.sh` 삭제
 - [ ] `tests/test_auth.py`, `tests/test_server.py` 삭제
 - [ ] `pyproject.toml`에서 `mcp` 의존성 제거
 - [ ] `.env.example`에서 `MCP_TRANSPORT`/`MCP_HOST`/`MCP_PORT`/`MCP_BEARER_TOKEN`/`MCP_SERVER_NAME` 제거
-- [ ] README.md/docs/setup.md의 Claude Code/Codex MCP 등록 안내 전체 제거 (README.md는 이후 Claude가 마무리하지만, 명백히 죽은 MCP 안내는 codex가 지워도 됨 — 헷갈리지 않게 "웹앱으로 전환됨, 자세한 사용법은 docs/setup.md 참고" 한 줄 정도로만 남겨둘 것)
+- [ ] README.md/docs/setup.md의 Claude Code/Codex/ChatGPT MCP 등록 안내 전체 제거 (README.md는 이후 Claude가 마무리하지만, 명백히 죽은 MCP 안내는 codex가 지워도 됨 — 헷갈리지 않게 "웹앱으로 전환됨, 자세한 사용법은 docs/setup.md 참고" 한 줄 정도로만 남겨둘 것)
 
 ### 12.1 디렉터리 이름 변경
 - [ ] `mcp_server/` → `app/`로 이름 변경, 패키지 내부 `from mcp_server....` import 전부 `from app....`로 갱신 (재사용 파일: `toc.py`, `research.py`, `assemble.py`, `storage.py`, `schemas.py`, `config.py`, 관련 테스트 전부)
