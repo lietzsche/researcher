@@ -654,6 +654,86 @@ codex가 헷갈리지 않도록 명시적으로 나열한다.
 
 ---
 
+## 24. SearXNG 봇 차단 시 유료 리트리버로 자동 폴백 (Phase 21 구현 대상)
+
+### 24.1 배경
+
+§21~§22에서 이미 다뤘듯, 자체 호스팅 SearXNG는 상위 검색엔진(Google/Bing 등)이 그 서버 IP를 봇으로 차단하면 일부 또는 전체 쿼리에서 빈 결과를 반환할 수 있다. §22 조치로 출처 없는 완료는 `done`이 아니라 `error`로 기록되어 재시도는 가능해졌지만, **같은 SearXNG로 재시도해도 차단 상태 자체는 그대로**이므로 사실상 수동으로 몇 번이고 "이 섹션만 리서치"를 눌러보는 것 말고는 대응 수단이 없었다.
+
+이번 요청: SearXNG(무료, 기본)가 실패했을 때 GPT-Researcher가 지원하는 유료 리트리버(사용자가 예시로 든 Tavily 등)로 **자동 재시도**하는 옵션을 추가한다. 기본값은 지금처럼 SearXNG만 쓰는 것이고, 유료 리트리버는 사용자가 원할 때만 명시적으로 켜는 선택 사항으로 설계한다 — §12에서 확립한 "관리할 비밀은 하나(DEEPSEEK_API_KEY)" 원칙에 대한 §12의 `SITE_PASSWORD`와 같은 성격의, 사용자가 스스로 선택하는 예외다.
+
+### 24.2 "봇 차단"을 코드에서 어떻게 판별하는가
+
+직접 설치된 `gpt_researcher` 소스를 확인한 결과, SearXNG 리트리버(`gpt_researcher/retrievers/searx/searx.py`)의 실패는 두 가지 형태로 나타난다:
+1. **예외 발생**: 상위 검색엔진 차단으로 SearXNG 자체가 비정상 응답(5xx 등)을 주거나 타임아웃되면, `requests.exceptions.RequestException`을 잡아 일반 `Exception`으로 재발생시킨다. 이 예외는 `GPTResearcher.conduct_research()`/`write_report()`를 타고 올라와 `app/research.py`의 `research_section()`을 크래시시킨다(현재는 `except BaseException: status=error; raise`로만 처리됨).
+2. **조용한 빈 결과**: SearXNG는 200을 반환하지만 `results`가 비어 있으면(개별 상위 엔진들이 각자 차단당해 SearXNG 입장에선 "결과 없음"으로만 보이는 경우), 예외 없이 빈 리스트가 반환된다. 이 경우 GPT-Researcher는 근거 없는 서술이나 거절 문구를 리포트로 반환하고, §22 로직이 이를 `source_count=0` → `status=error`로 잡아낸다.
+
+정확히 "봇 차단"인지 "이 쿼리는 정말 결과가 없다"인지 SearXNG의 응답만으로는 구분할 수 없다(SearXNG가 상위 엔진의 차단 여부를 별도로 신호해주지 않음, 직접 코드로 확인함). 따라서 이번 설계는 그 둘을 구분하려 하지 않고, **"SearXNG 시도가 예외를 던지거나 출처를 하나도 못 찾으면, 그 자체를 폴백 조건으로 취급한다"**는 실용적 기준을 쓴다 — §22에서 이미 "출처 없음 = 사실상 실패"로 취급하기로 한 결정과 일관된다.
+
+### 24.3 설정 (`app/config.py`)
+
+```
+FALLBACK_RETRIEVER=tavily            # 미설정 시 지금처럼 폴백 없음(기본값)
+FALLBACK_RETRIEVER_API_KEY=...       # FALLBACK_RETRIEVER를 설정하면 필수
+```
+
+- `Settings`에 `fallback_retriever: str | None = None`, `fallback_retriever_api_key: str | None = None` 추가.
+- 지원 대상은 GPT-Researcher가 내장 지원하는 리트리버 중 **API 키 하나만으로 동작하는** 것들로 한정한다(직접 소스 확인 완료 — `os.environ["<NAME>_API_KEY"]` 한 줄만 읽는 리트리버들):
+
+  ```python
+  FALLBACK_RETRIEVER_API_KEY_ENV: dict[str, str] = {
+      "tavily": "TAVILY_API_KEY",
+      "serper": "SERPER_API_KEY",
+      "serpapi": "SERPAPI_API_KEY",
+      "searchapi": "SEARCHAPI_API_KEY",
+      "bing": "BING_API_KEY",
+      "exa": "EXA_API_KEY",
+  }
+  ```
+  (google은 `GOOGLE_API_KEY` + `GOOGLE_CX_KEY` 두 개가 필요해 "키 하나만" 원칙에 안 맞으므로 이번 범위에서 제외 — 필요해지면 나중에 별도로 추가.)
+  이 딕셔너리는 `app/config.py`에 정의하고, `app/research.py`가 그대로 import해서 쓴다(리트리버 이름 검증과 env var 매핑을 한 곳에서만 관리).
+- `validate_provider_and_retriever`(기존 model_validator)에 검증 추가: `fallback_retriever`가 설정됐는데 `FALLBACK_RETRIEVER_API_KEY_ENV`에 없는 이름이면 `ValueError`(허용 목록을 메시지에 포함), `fallback_retriever_api_key`가 비어있으면 `ValueError`("FALLBACK_RETRIEVER를 설정하려면 FALLBACK_RETRIEVER_API_KEY도 필요합니다").
+- `load_settings()`에 두 필드 로딩 추가: `os.getenv("FALLBACK_RETRIEVER") or None`, `os.getenv("FALLBACK_RETRIEVER_API_KEY") or None`.
+
+### 24.4 리서치 로직 (`app/research.py`)
+
+- `_configure_gpt_researcher(settings, *, retriever: str = "searx")`로 시그니처 변경. 기존 SearXNG 타임아웃 몽키패치/`EMBEDDING`/LLM 3종/`DEEPSEEK_API_KEY` 설정은 그대로 유지하되, `os.environ["RETRIEVER"] = retriever`로 바꾸고(기존엔 하드코딩된 `"searx"`), `retriever != "searx"`이고 `settings.fallback_retriever_api_key`가 있으면 `FALLBACK_RETRIEVER_API_KEY_ENV[retriever]`로 알아낸 이름의 환경변수에 그 키를 설정한다.
+- `research_section()` 내부에 두 리트리버 시도를 공통화하는 내부 헬퍼(예: `async def _attempt(retriever_name)`)를 두고, 기존에 `factory(...)` 호출부터 `sources = _normalize_sources(...)`까지의 로직을 그 안으로 옮긴다(현재 로직 그대로, 새 코드 추가 없음 — 단순 추출).
+- 시도 순서:
+  1. `_attempt("searx")` 호출. 예외가 나면: `settings.fallback_retriever`가 없으면 그대로 raise(기존 동작 그대로 유지 — 폴백 미설정 사용자는 아무 변화 없음). 있으면 `logger.warning(...)`으로 SearXNG 실패와 폴백 시도 사실을 남기고, `sources = []`로 취급해 다음 단계로 넘어간다.
+  2. SearXNG 시도가 (예외 없이) 끝났지만 `sources`가 비어 있고 `settings.fallback_retriever`가 설정돼 있으면, `logger.warning(...)`을 남기고 `_attempt(settings.fallback_retriever)`를 호출한다. 이 두 번째 시도가 예외를 던지면 그대로 raise(양쪽 다 실패 — 기존 `except BaseException: status=error; raise` 경로로 흘러가게 둔다).
+  3. 폴백까지 시도했는데도 `sources`가 비어 있으면, §22 그대로 `status="error", source_count=0`으로 기록(어느 리트리버를 최후로 썼는지는 WARNING 로그에 남기고 manifest 스키마는 건드리지 않는다 — 이미 로그 페이지(§20.2)가 있으므로 별도 필드 불필요).
+  4. `settings.fallback_retriever`가 아예 설정 안 된 기본 상태에서는 1번 경로에서 예외 시 즉시 raise, 빈 결과 시 §22 그대로 — **동작 변화 없음**을 반드시 회귀 테스트로 보장할 것.
+- 정상 응답(둘 중 하나라도 출처를 찾음)이면 지금처럼 `status="done"`으로 기록. 어떤 리트리버가 최종적으로 성공했는지는 `logger.info(...)`로만 남긴다.
+
+### 24.5 문서 (`docs/setup.md`, `.env.example`)
+
+- `docs/setup.md`에 새 절 추가: "SearXNG가 차단당할 때 유료 리트리버로 폴백하기 (선택)".
+  - 언제 켜야 하는지: §22의 `source_count=0` 경고가 로그 페이지에 반복적으로 뜰 때.
+  - 지원 리트리버 목록(§24.3의 6개)과 각각 가입 링크(Tavily: tavily.com, Serper: serper.dev, SerpApi: serpapi.com, SearchApi: searchapi.io, Bing: Azure Bing Search API, Exa: exa.ai) — Claude가 마무리 검토 시 링크가 실제로 살아있는지 확인.
+  - **과금 안내를 명시적으로 강조**: 이 프로젝트는 지금까지 "관리할 비밀/과금 대상은 DeepSeek API 키 하나뿐"이었다는 점(§12, §14)을 문서에서 다시 언급하고, 이 옵션을 켜면 두 번째 유료 API 키가 추가된다는 것, SearXNG가 계속 실패하는 상황에서만 호출되므로 평소엔 과금이 없지만 대량 차단 상황에서는 여러 섹션이 동시에 폴백을 타면서 비용이 늘 수 있다는 점을 명시.
+  - 각 서비스의 정확한 무료 크레딧/가격은 서비스 쪽에서 수시로 바뀌므로 구체적 숫자를 문서에 박아넣지 말고, "가입 페이지의 가격 정책을 직접 확인하라"고 안내(잘못된 숫자를 문서에 고정하는 게 더 위험).
+  - 설정 예시: `.env`에 `FALLBACK_RETRIEVER=tavily`와 `FALLBACK_RETRIEVER_API_KEY=<발급받은 키>` 추가.
+- `.env.example`에 주석 처리된 예시 블록 추가:
+  ```
+  # SearXNG가 봇 차단으로 실패하면 유료 리트리버로 자동 재시도(선택, 추가 과금 발생).
+  # 지원: tavily, serper, serpapi, searchapi, bing, exa (docs/setup.md 참고)
+  # FALLBACK_RETRIEVER=tavily
+  # FALLBACK_RETRIEVER_API_KEY=
+  ```
+
+### 24.6 테스트
+
+- `tests/test_config.py`(또는 기존 설정 테스트 파일): `fallback_retriever` 미설정 시 기존과 동일하게 검증 통과, 지원 목록 밖 이름은 `ValueError`, `fallback_retriever_api_key` 없이 `fallback_retriever`만 설정하면 `ValueError`, 올바른 조합은 통과.
+- `tests/test_research.py`:
+  - 폴백 미설정 상태에서 SearXNG 역할의 가짜 리트리버가 예외를 던지면 여전히 그대로 전파되고 섹션이 `error`로 기록되는지(회귀 — 동작 변화 없음 확인).
+  - 폴백 미설정 상태에서 출처 없이 끝나면 여전히 §22 그대로 `error`+`source_count=0`인지(회귀).
+  - 폴백 설정 상태에서, 1차 시도가 예외를 던지는 가짜 팩토리 + 2차 시도(폴백)가 성공하는 가짜 팩토리 조합으로 `research_section()`을 호출해 최종 `status="done"`이 기록되는지, 그리고 두 번째 호출 시점에 `os.environ["RETRIEVER"]`가 폴백 리트리버 이름으로 바뀌어 있었는지 확인.
+  - 폴백 설정 상태에서, 1차가 빈 결과(예외 없음) + 2차(폴백)도 빈 결과면 최종적으로 `error`+`source_count=0`인지(양쪽 다 실패해도 크래시하지 않고 §22 경로로 정상 귀결되는지).
+  - 폴백 설정 상태에서 1차가 성공(출처 있음)하면 폴백 팩토리가 아예 호출되지 않는지(불필요한 유료 API 호출 방지가 핵심이므로 반드시 검증).
+
+---
+
 ## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
 
 - 구현 완료 후 코드 리뷰.
