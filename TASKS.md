@@ -275,16 +275,16 @@
 
 > Phase 17 배포 직후 실사용 테스트에서 6개 섹션 중 2개가 완전히 빈 컨텍스트로 실패하고, 나머지도 서브쿼리 대부분에서 검색 결과를 못 찾은 채 LLM이 할루시네이션으로 채운 정황이 발견됨. 가장 유력한 원인은 병렬 빌드(§20.5)가 자체 호스팅 SearXNG에 거는 동시 부하 — DESIGN.md §21에 근거와 한계를 상세히 적어뒀으니 반드시 먼저 읽을 것. **완전히 확진된 원인은 아니라는 점, 그리고 이번 수정이 §20.5의 병렬 메커니즘 자체를 없애는 게 아니라 기본값만 안전하게 되돌리는 것이라는 점**을 정확히 이해하고 시작해.
 
-- [ ] `app/config.py`: `max_concurrent_research`의 `Field(default=2, ...)` → `Field(default=1, ...)`. `load_settings()`의 `os.getenv("MAX_CONCURRENT_RESEARCH", "2")` → `os.getenv("MAX_CONCURRENT_RESEARCH", "1")`. 검증 범위(1~5)와 세마포어/`asyncio.gather` 메커니즘 자체는 절대 건드리지 말 것.
-- [ ] `.env.example`, `docker-compose.yml`의 `MAX_CONCURRENT_RESEARCH` 기본값도 1로 통일.
-- [ ] `app/jobs.py`: 섹션 리서치 결과의 `sources`가 비어 있으면(`len(sources) == 0`) `logger.warning(...)`으로 섹션 id/토픽/상태를 남긴다 (섹션 상태는 여전히 `done` 그대로 — 상태를 `error`로 바꾸지 말 것, 진단 가시성만 추가하는 것임). `_research_one()`이 `research_section()`의 반환값을 받는 지점에 추가하는 게 자연스러움.
-- [ ] `docs/setup.md`: §2의 `MAX_CONCURRENT_RESEARCH` 기본값 문구를 1로 정정하고 "값을 올리면 자체 호스팅 SearXNG가 동시 요청에 레이트리밋/차단될 수 있다"는 경고 추가. §6 "검색 실패 시 조용히 빈 섹션" 항목에 "이제 서버 로그에 `source_count == 0` 경고가 남는다" 한 줄 추가.
-- [ ] 테스트:
+- [x] `app/config.py`: `max_concurrent_research`의 `Field(default=2, ...)` → `Field(default=1, ...)`. `load_settings()`의 `os.getenv("MAX_CONCURRENT_RESEARCH", "2")` → `os.getenv("MAX_CONCURRENT_RESEARCH", "1")`. 검증 범위(1~5)와 세마포어/`asyncio.gather` 메커니즘 자체는 절대 건드리지 말 것.
+- [x] `.env.example`, `docker-compose.yml`의 `MAX_CONCURRENT_RESEARCH` 기본값도 1로 통일.
+- [x] `app/jobs.py`: 섹션 리서치 결과의 `sources`가 비어 있으면(`len(sources) == 0`) `logger.warning(...)`으로 섹션 id/토픽/상태를 남긴다 (섹션 상태는 여전히 `done` 그대로 — 상태를 `error`로 바꾸지 말 것, 진단 가시성만 추가하는 것임). `_research_one()`이 `research_section()`의 반환값을 받는 지점에 추가하는 게 자연스러움.
+- [x] `docs/setup.md`: §2의 `MAX_CONCURRENT_RESEARCH` 기본값 문구를 1로 정정하고 "값을 올리면 자체 호스팅 SearXNG가 동시 요청에 레이트리밋/차단될 수 있다"는 경고 추가. §6 "검색 실패 시 조용히 빈 섹션" 항목에 "이제 서버 로그에 `source_count == 0` 경고가 남는다" 한 줄 추가.
+- [x] 테스트:
   - `app/config.py` 기본값이 1인지 확인하는 테스트 추가/수정.
   - `sources`가 빈 섹션이 `done` 상태를 유지하면서 WARNING 로그를 남기는지 확인하는 회귀 테스트(fake researcher factory + `caplog`).
   - 기존 §20.5 병렬 테스트들(`Settings(..., max_concurrent_research=2)`처럼 명시적으로 값을 지정한 것들)은 기본값 변경과 무관하게 그대로 통과해야 함 — 혹시 기본값에 암묵적으로 의존하는 테스트가 있다면 명시적으로 고칠 것.
-- [ ] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마.
-- [ ] 논리 단위로 커밋 나눠서 push까지.
+- [x] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마.
+- [x] 논리 단위로 커밋 나눠서 push까지.
 
 ---
 

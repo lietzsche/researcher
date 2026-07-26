@@ -107,6 +107,20 @@ def test_config_loads_max_concurrent_research(
     assert settings.max_concurrent_research == 4
 
 
+def test_config_defaults_max_concurrent_research_to_one(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MAX_CONCURRENT_RESEARCH", raising=False)
+
+    settings = load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    )
+
+    assert settings.max_concurrent_research == 1
+
+
 @pytest.mark.parametrize("value", [0, 6])
 def test_config_rejects_out_of_range_research_concurrency(value: int) -> None:
     with pytest.raises(ValueError):

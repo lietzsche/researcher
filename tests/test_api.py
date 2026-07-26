@@ -413,6 +413,45 @@ async def test_job_queue_timeout_marks_error_and_processes_next_job(
 
 
 @pytest.mark.asyncio
+async def test_job_queue_warns_for_done_section_without_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    storage = OutputStorage(tmp_path, "No Sources Topic")
+    sections = [{"id": "01", "title": "Empty Context"}]
+    storage.write_json(storage.toc_json_path, sections)
+    storage.initialize_manifest(depth="standard", sections=sections)
+
+    async def fake_research(
+        topic: str,
+        section_id: str,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        storage.update_section(section_id, status="done", source_count=0)
+        return {"content_markdown": "No context was available.", "sources": []}
+
+    monkeypatch.setattr(jobs_module, "research_section", fake_research)
+    queue = SerialJobQueue(
+        Settings(require_api_key=False, research_output_dir=tmp_path)
+    )
+    await queue.start()
+    try:
+        await queue.enqueue_section("No Sources Topic", "01")
+        await queue.join()
+    finally:
+        await queue.stop()
+
+    section = storage.load_manifest()["sections"][0]
+    assert section["status"] == "done"
+    assert section["source_count"] == 0
+    assert "source_count == 0" in caplog.text
+    assert "section 01" in caplog.text
+    assert "No Sources Topic" in caplog.text
+    assert "status remains done" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_build_researches_with_configured_concurrency_then_assembles(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

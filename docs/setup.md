@@ -19,7 +19,7 @@ cp .env.example .env
 `.env`를 열어 다음을 채웁니다.
 
 - `DEEPSEEK_API_KEY` (기본 프로바이더). Anthropic/OpenAI로 바꾸려면 `.env.example`의 대체 옵션 블록을 참고해 키와 `FAST_LLM`/`SMART_LLM`/`STRATEGIC_LLM` 세 값을 함께 바꾸세요.
-- `SECTION_TIMEOUT_SECONDS`는 섹션 하나의 최대 리서치 시간(기본 900초), `MAX_CONCURRENT_RESEARCH`는 전체 빌드 안에서 동시에 실행할 섹션 수(기본 2, 허용 범위 1~5)입니다. 처음에는 기본값을 권장합니다.
+- `SECTION_TIMEOUT_SECONDS`는 섹션 하나의 최대 리서치 시간(기본 900초), `MAX_CONCURRENT_RESEARCH`는 전체 빌드 안에서 동시에 실행할 섹션 수(기본 1, 허용 범위 1~5)입니다. 자체 호스팅 SearXNG에서는 값을 올리면 짧은 시간에 검색 요청이 몰려 외부 검색엔진의 레이트리밋이나 차단으로 빈 결과가 늘어날 수 있으므로 기본값을 권장합니다.
 - **`SITE_PASSWORD`**: 반드시 강력한 값으로 채우세요. 비워두면 앱이 인증 없이 뜨고 시작 로그에 경고를 남깁니다 — Quick Tunnel로 공개되는 순간 누구나 접근/삭제/DeepSeek 예산 소비가 가능해집니다. 생성 예시:
   ```bash
   python3 -c "import secrets; print(secrets.token_urlsafe(24))"
@@ -95,7 +95,7 @@ outputs/<topic-slug>/
 
 - **`gpt-researcher` 버전 고정 필요**: 최신 배포판인 0.16.0에는 `gpt_researcher/actions/query_processing.py`에 `typing` import 순서 버그가 있어(`Any`/`List`를 함수 시그니처에서 사용한 뒤에야 `from typing import ...`가 실행됨), 이 버전이 설치되면 리서치 관련 기능이 `import gpt_researcher` 시점에 `NameError`로 즉시 실패합니다. `pyproject.toml`에 `gpt-researcher>=0.14.0,<0.16.0`로 상한을 고정해 이 회귀를 피하도록 해뒀습니다 — 업스트림에서 수정되기 전까지는 이 핀을 유지하세요.
 - **`SEARXNG_SECRET`은 현재 아무 효과가 없습니다**: `docker-compose.yml`이 이 환경변수를 컨테이너에 전달하지만, SearXNG 이미지의 엔트리포인트 스크립트는 이 변수를 전혀 읽지 않습니다. 실제 `secret_key`는 `searxng/settings.yml`에 하드코딩된 값 그대로 사용됩니다. SearXNG는 컨테이너 네트워크 안에서만 존재하고 호스트/외부에 노출되지 않으므로 보안 위험은 아닙니다.
-- **검색 실패 시 조용히 빈 섹션이 만들어질 수 있음**: SearXNG가 모든 쿼리에 대해 빈 결과를 반환하면(차단/레이트리밋 등), GPT-Researcher는 오류를 던지는 대신 "소스를 찾지 못했다"는 안내 문구를 리포트 본문으로 반환합니다. 이 경우도 정상 `done` 상태로 저장됩니다 — 결과물 품질이 이상하다면 해당 섹션의 `manifest.json`(또는 진행 화면의 출처 개수)에서 `source_count`가 0인지 확인하세요.
+- **검색 실패 시 조용히 빈 섹션이 만들어질 수 있음**: SearXNG가 모든 쿼리에 대해 빈 결과를 반환하면(차단/레이트리밋 등), GPT-Researcher는 오류를 던지는 대신 "소스를 찾지 못했다"는 안내 문구를 리포트 본문으로 반환합니다. 이 경우도 정상 `done` 상태로 저장됩니다. 이제 `source_count == 0`인 섹션은 서버 로그 페이지에 WARNING을 남깁니다 — 결과물 품질이 이상하다면 경고와 해당 섹션의 본문을 함께 확인하세요.
 - **Quick Tunnel은 상시 서비스가 아닙니다**: Cloudflare의 무료/베스트에포트 기능이라 SLA가 없고, URL이 재시작마다 바뀝니다. 서버(정확히는 `cloudflared` 컨테이너)가 켜져 있는 동안만 접속됩니다.
 - **서버 다운타임 중 작업 손실**: 섹션이 `in_progress` 상태에서 컨테이너가 죽으면 재시작 후에도 자동으로 재시도되지 않습니다 — 진행 화면에서 해당 섹션을 다시 트리거하세요.
 - **섹션 시간 제한**: 개별 섹션이 `SECTION_TIMEOUT_SECONDS`를 넘기면 `error`로 기록하고 큐의 다른 작업은 계속합니다. 전체 빌드에서 하나라도 실패하면 다른 대상 섹션은 끝까지 진행하지만 최종 문서 조립은 생략됩니다. 서버 로그에서 실패 원인을 확인하세요.
