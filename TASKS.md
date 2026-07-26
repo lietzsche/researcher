@@ -134,11 +134,11 @@
 - [x] 반응형 CSS로 모바일 브라우저에서도 정상 동작 확인 (실제 폰 화면 크기로 최소 1회 확인 권장)
 
 ### 12.6 Docker Compose / 배포
-- [ ] `Dockerfile` 작성 (app 이미지: Python 3.12, `pip install -e .`, uvicorn으로 `app.main:app` 구동)
-- [ ] `docker-compose.yml`에 `app`(포트 미노출, `outputs/`를 호스트 디렉터리에 바인드 마운트), `cloudflared`(`command: tunnel --url http://app:8000`) 서비스 추가. 기존 `redis`/`searxng`는 유지하되 `SEARXNG_URL`을 컨테이너 네트워크 호스트명(`http://searxng:8080`)으로 조정
-- [ ] `scripts/up.sh`: `docker compose up -d` + 헬스체크 대기 + 아래 `get-tunnel-url.sh` 호출
-- [ ] `scripts/down.sh`: `docker compose down`
-- [ ] `scripts/get-tunnel-url.sh`: `docker compose logs cloudflared`에서 최신 `https://*.trycloudflare.com` URL 추출해 출력
+- [x] `Dockerfile` 작성 (app 이미지: Python 3.12, `pip install -e .`, uvicorn으로 `app.main:app` 구동)
+- [x] `docker-compose.yml`에 `app`(포트 미노출, `outputs/`를 호스트 디렉터리에 바인드 마운트), `cloudflared`(`command: tunnel --url http://app:8000`) 서비스 추가. 기존 `redis`/`searxng`는 유지하되 `SEARXNG_URL`을 컨테이너 네트워크 호스트명(`http://searxng:8080`)으로 조정
+- [x] `scripts/up.sh`: `docker compose up -d` + 헬스체크 대기 + 아래 `get-tunnel-url.sh` 호출
+- [x] `scripts/down.sh`: `docker compose down`
+- [x] `scripts/get-tunnel-url.sh`: `docker compose logs cloudflared`에서 최신 `https://*.trycloudflare.com` URL 추출해 출력
 
 ### 12.7 테스트
 - [ ] `tests/test_api.py` (신규): FastAPI `TestClient`/`httpx.AsyncClient`로 각 라우트 스모크 테스트 (주제 생성, 목록 조회, 삭제, 인증 미들웨어 동작 — 실제 LLM 호출은 목이나 기존 테스트 패턴대로 팩토리 주입)
