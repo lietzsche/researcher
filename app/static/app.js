@@ -225,11 +225,17 @@ function renderNewTopic() {
   });
 }
 
-async function renderToc(slug) {
-  setLoading("목차를 불러오는 중…");
+async function renderToc(slug, isPoll = false) {
+  if (!isPoll) setLoading("목차를 불러오는 중…");
   const detail = await api(`/api/topics/${encodeSlug(slug)}`);
   const { toc, manifest } = detail;
+  const isRunning = manifest.sections.some((section) => section.status === "in_progress");
   appRoot.innerHTML = `
+    ${
+      isRunning
+        ? `<p class="panel research-notice">리서치가 진행 중입니다. 자동으로 갱신됩니다.</p>`
+        : ""
+    }
     <section class="page-heading">
       <div>
         <a class="back-link" href="#/">← 내 주제</a>
@@ -237,10 +243,10 @@ async function renderToc(slug) {
         <h1>${escapeHtml(manifest.topic)}</h1>
         <p>목차만 저장해도 좋습니다. 준비되면 전체 또는 원하는 섹션만 시작하세요.</p>
       </div>
-      <button id="build-all" class="button button-primary">전체 리서치 시작</button>
+      <button id="build-all" class="button button-primary" ${isRunning ? "disabled" : ""}>전체 리서치 시작</button>
     </section>
     <div class="toc-list">
-      ${toc.map((section) => tocSection(section, manifest)).join("")}
+      ${toc.map((section) => tocSection(section, manifest, isRunning)).join("")}
     </div>`;
 
   document.querySelector("#build-all").addEventListener("click", async (event) => {
@@ -271,11 +277,27 @@ async function renderToc(slug) {
       }
     });
   });
+
+  if (isRunning && window.location.hash.endsWith("/toc")) {
+    pollTimer = window.setTimeout(() => {
+      renderToc(slug, true).catch((error) => {
+        notify(error.message, true);
+        pollTimer = window.setTimeout(() => renderToc(slug, true), 5000);
+      });
+    }, 3000);
+  }
 }
 
-function tocSection(section, manifest) {
+function tocSection(section, manifest, isRunning) {
   const state = manifest.sections.find((item) => item.id === section.id);
-  const disabled = state?.status === "in_progress" || state?.status === "done";
+  const disabled =
+    isRunning || state?.status === "in_progress" || state?.status === "done";
+  const buttonText =
+    state?.status === "in_progress"
+      ? "진행 중…"
+      : state?.status === "done"
+        ? "리서치 완료"
+        : "이 섹션만 리서치";
   return `
     <article class="panel toc-item">
       <div class="section-number">${escapeHtml(section.id)}</div>
@@ -288,7 +310,7 @@ function tocSection(section, manifest) {
           <button class="button button-small button-ghost"
             data-research-section="${escapeHtml(section.id)}"
             ${disabled ? "disabled" : ""}>
-            ${state?.status === "done" ? "리서치 완료" : "이 섹션만 리서치"}
+            ${buttonText}
           </button>
         </div>
         <ul>
@@ -334,12 +356,12 @@ async function renderProgress(slug, isPoll = false) {
       <span>${percent}%</span>
     </section>
     <section class="status-list">
-      ${manifest.sections.map(statusRow).join("")}
+      ${manifest.sections.map((section) => statusRow(section, slug)).join("")}
     </section>
     <section class="footer-actions">
       ${
         hasDocument
-          ? `<a class="button button-primary" target="_blank" rel="noopener" href="/api/topics/${encodeSlug(slug)}/document">전체 문서 보기</a>
+          ? `<a class="button button-primary" href="#/topic/${encodeSlug(slug)}/document">전체 문서 보기</a>
              <a class="button button-ghost" href="/api/topics/${encodeSlug(slug)}/download">다운로드</a>`
           : `<span class="muted">${running ? "완료될 때까지 자동으로 갱신합니다." : "전체 리서치를 시작하면 최종 문서가 조립됩니다."}</span>`
       }
@@ -367,7 +389,7 @@ async function renderProgress(slug, isPoll = false) {
   }
 }
 
-function statusRow(section) {
+function statusRow(section, slug) {
   return `
     <article class="panel status-row">
       <span class="status-dot ${escapeHtml(section.status)}" aria-hidden="true"></span>
@@ -375,10 +397,50 @@ function statusRow(section) {
         <h3>${escapeHtml(section.id)}. ${escapeHtml(section.title)}</h3>
         <p>${section.source_count || 0}개 출처</p>
       </div>
-      <span class="status-badge ${escapeHtml(section.status)}">
-        ${escapeHtml(statusLabels[section.status] || section.status)}
-      </span>
+      <div class="status-actions">
+        ${
+          section.status === "done"
+            ? `<a class="button button-small button-ghost"
+                href="#/topic/${encodeSlug(slug)}/section/${encodeURIComponent(section.id)}">보기</a>`
+            : ""
+        }
+        <span class="status-badge ${escapeHtml(section.status)}">
+          ${escapeHtml(statusLabels[section.status] || section.status)}
+        </span>
+      </div>
     </article>`;
+}
+
+async function renderDocument(slug) {
+  setLoading("문서를 불러오는 중…");
+  const resp = await fetch(`/api/topics/${encodeSlug(slug)}/document`, {
+    credentials: "same-origin",
+  });
+  if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+  const text = await resp.text();
+  appRoot.innerHTML = `
+    <section class="narrow">
+      <a class="back-link" href="#/topic/${encodeSlug(slug)}/progress">← 돌아가기</a>
+      <div class="footer-actions" style="margin-bottom:1rem">
+        <a class="button button-ghost" href="/api/topics/${encodeSlug(slug)}/download">다운로드</a>
+      </div>
+      <article class="panel prose">${marked.parse(text)}</article>
+    </section>`;
+}
+
+async function renderSectionDocument(slug, sectionId) {
+  setLoading("섹션 문서를 불러오는 중…");
+  const resp = await fetch(
+    `/api/topics/${encodeSlug(slug)}/sections/${encodeURIComponent(sectionId)}`,
+    { credentials: "same-origin" },
+  );
+  if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+  const text = await resp.text();
+  appRoot.innerHTML = `
+    <section class="narrow">
+      <a class="back-link" href="#/topic/${encodeSlug(slug)}/progress">← 돌아가기</a>
+      <article class="panel prose">${marked.parse(text)}</article>
+    </section>`;
 }
 
 async function route() {
@@ -389,10 +451,14 @@ async function route() {
       await renderHome();
     } else if (parts[0] === "new") {
       renderNewTopic();
-    } else if (parts[0] === "topic" && parts.length === 3) {
+    } else if (parts[0] === "topic" && (parts.length === 3 || parts.length === 4)) {
       const slug = decodeURIComponent(parts[1]);
-      if (parts[2] === "toc") await renderToc(slug);
-      else if (parts[2] === "progress") await renderProgress(slug);
+      if (parts[2] === "toc" && parts.length === 3) await renderToc(slug);
+      else if (parts[2] === "progress" && parts.length === 3) await renderProgress(slug);
+      else if (parts[2] === "document" && parts.length === 3) await renderDocument(slug);
+      else if (parts[2] === "section" && parts.length === 4) {
+        await renderSectionDocument(slug, decodeURIComponent(parts[3]));
+      }
       else window.location.hash = "#/";
     } else {
       window.location.hash = "#/";
