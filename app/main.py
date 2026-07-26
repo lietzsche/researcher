@@ -272,7 +272,33 @@ def create_app(
             raise HTTPException(status_code=404, detail="Study document not found")
         return PlainTextResponse(
             storage.study_document_path.read_text(encoding="utf-8"),
-            media_type="text/markdown",
+            media_type="text/markdown; charset=utf-8",
+        )
+
+    @application.get("/api/topics/{slug}/sections/{section_id}")
+    async def get_section_document(
+        slug: str,
+        section_id: str,
+        request: Request,
+    ) -> PlainTextResponse:
+        storage = _topic_storage(_settings(request), slug)
+        manifest = storage.load_manifest()
+        section = next(
+            (
+                item
+                for item in manifest.get("sections", [])
+                if item.get("id") == section_id
+            ),
+            None,
+        )
+        if section is None or section.get("status") != "done":
+            raise HTTPException(status_code=404, detail="Section document not found")
+        section_path = storage.section_path(section_id, str(section.get("title", "")))
+        if not section_path.is_file():
+            raise HTTPException(status_code=404, detail="Section document not found")
+        return PlainTextResponse(
+            section_path.read_text(encoding="utf-8"),
+            media_type="text/markdown; charset=utf-8",
         )
 
     @application.get("/api/topics/{slug}/download")
@@ -282,7 +308,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Study document not found")
         return FileResponse(
             storage.study_document_path,
-            media_type="text/markdown",
+            media_type="text/markdown; charset=utf-8",
             filename=f"{slug}.md",
         )
 
