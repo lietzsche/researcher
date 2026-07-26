@@ -16,6 +16,11 @@ from app.toc import generate_toc
 logger = logging.getLogger(__name__)
 
 
+def _run_coroutine_in_thread(coro_factory, /, *args, **kwargs):
+    """Drive a fresh coroutine to completion on a new event loop, off the main thread."""
+    return asyncio.run(coro_factory(*args, **kwargs))
+
+
 @dataclass(frozen=True, slots=True)
 class ResearchJob:
     kind: Literal["section", "build", "toc"]
@@ -127,11 +132,20 @@ class SerialJobQueue:
             job = await self._queue.get()
             try:
                 if job.kind == "section":
-                    await self._research_one(job, job.section_ids[0])
+                    await asyncio.to_thread(
+                        _run_coroutine_in_thread,
+                        self._research_one,
+                        job,
+                        job.section_ids[0],
+                    )
                 elif job.kind == "build":
-                    await self._run_build(job)
+                    await asyncio.to_thread(
+                        _run_coroutine_in_thread, self._run_build, job
+                    )
                 else:
-                    await self._generate_toc(job)
+                    await asyncio.to_thread(
+                        _run_coroutine_in_thread, self._generate_toc, job
+                    )
             except asyncio.CancelledError:
                 raise
             except BaseException:

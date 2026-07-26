@@ -1,6 +1,8 @@
 import asyncio
 from io import BytesIO
 from pathlib import Path
+from threading import Event
+import time
 from typing import Any
 
 import pytest
@@ -436,6 +438,81 @@ def test_static_frontend_is_served_without_password(
     assert client.get("/").status_code == 200
     assert client.get("/app.js").status_code == 200
     assert client.get("/style.css").status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_job_queue_blocking_research_does_not_block_main_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = OutputStorage(tmp_path, "Blocking Research")
+    sections = [{"id": "01", "title": "Blocking"}]
+    storage.write_json(storage.toc_json_path, sections)
+    storage.initialize_manifest(depth="standard", sections=sections)
+    blocking_started = Event()
+
+    async def fake_research(
+        topic: str,
+        section_id: str,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        blocking_started.set()
+        time.sleep(0.2)
+        storage.update_section(section_id, status="done")
+        return {}
+
+    monkeypatch.setattr(jobs_module, "research_section", fake_research)
+    queue = SerialJobQueue(
+        Settings(require_api_key=False, research_output_dir=tmp_path)
+    )
+    await queue.start()
+    try:
+        started_at = asyncio.get_running_loop().time()
+        main_loop_timer = asyncio.create_task(asyncio.sleep(0.01))
+        await asyncio.sleep(0)
+        await queue.enqueue_section("Blocking Research", "01")
+        await asyncio.wait_for(main_loop_timer, timeout=0.1)
+        elapsed = asyncio.get_running_loop().time() - started_at
+
+        assert blocking_started.is_set()
+        assert elapsed < 0.1
+        await queue.join()
+    finally:
+        await queue.stop()
+
+
+@pytest.mark.asyncio
+async def test_job_queue_stop_returns_while_research_thread_is_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = OutputStorage(tmp_path, "Stopping Queue")
+    sections = [{"id": "01", "title": "Blocking"}]
+    storage.write_json(storage.toc_json_path, sections)
+    storage.initialize_manifest(depth="standard", sections=sections)
+    blocking_started = Event()
+    blocking_release = Event()
+
+    async def fake_research(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        blocking_started.set()
+        blocking_release.wait(timeout=1)
+        return {}
+
+    monkeypatch.setattr(jobs_module, "research_section", fake_research)
+    queue = SerialJobQueue(
+        Settings(require_api_key=False, research_output_dir=tmp_path)
+    )
+    await queue.start()
+    try:
+        await queue.enqueue_section("Stopping Queue", "01")
+        await asyncio.wait_for(
+            asyncio.to_thread(blocking_started.wait),
+            timeout=0.5,
+        )
+        await asyncio.wait_for(queue.stop(), timeout=0.1)
+    finally:
+        blocking_release.set()
+        await queue.stop()
 
 
 @pytest.mark.asyncio
