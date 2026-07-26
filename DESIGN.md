@@ -734,6 +734,45 @@ FALLBACK_RETRIEVER_API_KEY=...       # FALLBACK_RETRIEVER를 설정하면 필수
 
 ---
 
+## 25. SearXNG 검색 실패 시 봇 차단 여부 진단 로그 (Phase 22 구현 대상)
+
+### 25.1 배경
+
+§24에서 SearXNG 실패 시 유료 리트리버로 자동 폴백하는 기능을 추가했지만, "이번 실패가 정말 봇 차단 때문이었는지"는 여전히 알 길이 없었다. 사용자 요청: 오류가 났을 때 봇 차단 여부를 확인할 수 있으면 좋겠다.
+
+### 25.2 SearXNG가 이미 제공하는 진단 정보 (직접 GitHub 소스로 확인함)
+
+SearXNG의 `/search?format=json` 응답은 `results` 외에 `unresponsive_engines` 필드도 포함한다(`searx/webutils.py`의 `get_json_response()`). 각 항목은 `[engine_name, translated_error_text]` 쌍이며, `translated_error_text`는 SearXNG가 내부 예외 클래스를 사람이 읽을 수 있는 문자열로 번역한 것이다(`get_translated_errors()` / `exception_classname_to_text` 매핑, 같은 파일에서 직접 확인). 대표적인 값:
+- **봇 차단 신호**: `CAPTCHA`, `Too many requests`, `Access denied`
+- **차단과 무관한 일반 오류**: `Timeout`, `HTTP error`, `Network error`, `Parsing error` 등
+
+그런데 GPT-Researcher의 SearXNG 리트리버(`gpt_researcher/retrievers/searx/searx.py`, 직접 소스 확인)는 `results`만 뽑아 쓰고 `unresponsive_engines`는 완전히 버린다 — 그래서 지금 이 앱은 이 진단 정보에 접근할 방법이 없다.
+
+### 25.3 설계
+
+`research_section()`이 SearXNG 시도가 실패했다고 판단하는 시점(예외 발생 또는 빈 결과)에, `app/research.py`의 기존 `quick_search()`와 같은 패턴으로 SearXNG의 JSON API를 우리가 직접 한 번 더 호출해 `unresponsive_engines`를 읽고, 봇 차단으로 보이는지 판정한 뒤 그 결과를 **로그 페이지(§20.2)에서 보이는 WARNING 로그**로 남긴다. §23(Phase 20) 리뷰에서 "이미 로그 페이지가 있으니 새 manifest 필드/새 UI는 불필요"라고 결론 냈던 것과 같은 이유로, 이번에도 새 manifest 필드나 새 UI를 만들지 않는다.
+
+- `app/research.py`에 `async def _diagnose_searxng_failure(query: str, settings: Settings) -> str` 추가:
+  - `quick_search()`와 동일한 방식으로 `httpx`를 이용해 `{settings.searxng_url}/search`에 `format=json`으로 직접 GET 요청(같은 `request_timeout_seconds` 사용).
+  - 이 함수는 **절대 예외를 밖으로 던지지 않는다** — 순수 진단용 부가 정보이므로, 진단 자체가 실패해도(요청 실패, JSON 파싱 실패 등) 섹션 리서치 흐름을 막으면 안 된다. 요청/파싱이 실패하면 `f"진단 실패: {exc}"` 같은 문자열을 그대로 반환한다.
+  - 응답에서 `unresponsive_engines` 리스트를 읽는다. 비어 있으면 `"응답 없는 엔진 없음 — 이 쿼리 자체에 결과가 없었을 가능성"`.
+  - 비어 있지 않으면, 각 항목의 번역된 오류 텍스트를 소문자로 비교해 다음 신호 집합과 부분 문자열 매치: `{"captcha", "too many request", "access denied", "blocked"}`. 하나라도 걸리면 `f"봇 차단 가능성 높음 ({매치된 엔진 수}/{전체 응답없는 엔진 수}개 엔진): {엔진별 사유 나열}"`. 하나도 안 걸리면 `f"{N}개 엔진 응답 없음, 명확한 차단 신호는 아님: {엔진별 사유 나열}"`.
+- `research_section()` 안에서, SearXNG(`"searx"`) 시도가 예외를 던졌거나 빈 결과를 반환한 바로 그 시점에 (폴백 리트리버 설정 여부와 무관하게, 예외 시 재raise/폴백 시도 여부를 결정하기 **전에**) `_diagnose_searxng_failure(query, settings)`를 호출해 결과를 `logger.warning("SearXNG 실패 진단 (섹션 %s, 주제 %r): %s", section_id, topic, diagnosis)`로 남긴다.
+  - 폴백이 설정 안 된 상태에서 SearXNG가 예외를 던지면: 진단 로그를 남긴 뒤 **그대로 같은 예외를 재raise**한다 (§24에서 이미 확립된 "폴백 미설정 시 동작 변화 없음" 회귀 조건은 예외 전파/최종 status에 한정되며, 새 WARNING 로그 한 줄이 추가되는 것은 이 조건을 어기지 않는다 — 로그는 부가 정보일 뿐 반환값이나 상태에 영향을 주지 않는다).
+  - `logger.warning`을 쓰는 이유: 이 프로젝트의 로그 페이지를 감싸는 root logger가 명시적인 레벨 설정 없이 기본값(`WARNING`)으로 동작 중이라는 것을 직접 코드로 확인함(`app/main.py`의 `lifespan`이 `logging.basicConfig`나 `setLevel`을 호출하지 않음) — `logger.info`로 남기면 로그 페이지에 아예 나타나지 않는다. (§24에서 추가된 "어떤 리트리버가 최종 성공했는지" `logger.info` 줄도 사실 이 문제로 로그 페이지에 안 보이지만, 이번 요청 범위 밖이므로 손대지 않는다 — 별도로 다룰 사안.)
+- **알려진 한계**: GPT-Researcher는 우리가 넘긴 원본 섹션 쿼리를 그대로 SearXNG에 보내지 않고, 내부적으로 LLM이 생성한 여러 하위 쿼리로 나눠 검색한다(직접 소스 확인). 이 진단은 원본 섹션 쿼리로 SearXNG를 별도로 한 번 더 호출하는 방식이라 실제로 실패했던 하위 쿼리와 정확히 같지는 않다 — 그래도 같은 SearXNG 인스턴스, 같은 시점의 상위 엔진 차단 상태를 반영하므로 실용적으로 충분한 근사치다. `docs/setup.md`의 로그 페이지 안내에 이 한계를 한 줄 추가한다.
+
+### 25.4 테스트
+
+- `_diagnose_searxng_failure()` 단위 테스트 (`respx`로 SearXNG JSON API 모킹, 기존 `test_quick_search_uses_searxng_json_api`와 같은 패턴):
+  - `unresponsive_engines`가 비어 있으면 "결과 없음" 계열 메시지.
+  - `unresponsive_engines`에 `"CAPTCHA"`/`"Too many requests"` 등이 있으면 "봇 차단 가능성 높음" 계열 메시지, 매치된 엔진 수가 정확한지.
+  - `unresponsive_engines`에 `"Timeout"`만 있으면 "명확한 차단 신호는 아님" 계열 메시지.
+  - SearXNG 요청 자체가 실패해도(`respx`로 연결 오류 시뮬레이션) 예외를 던지지 않고 실패를 설명하는 문자열을 반환.
+- `research_section()` 통합 테스트: SearXNG 역할의 가짜 팩토리가 예외를 던지거나 빈 결과를 반환하는 케이스에서, `caplog`로 WARNING 로그에 진단 문자열이 실제로 남는지 확인. 폴백 미설정 상태에서도 이 로그가 남되 최종 예외 전파/status는 §24 테스트와 동일하게 유지되는지(순수 추가일 뿐 회귀 없음) 확인.
+
+---
+
 ## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
 
 - 구현 완료 후 코드 리뷰.

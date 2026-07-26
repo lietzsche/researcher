@@ -373,6 +373,23 @@
 
 ---
 
+## Phase 22 — SearXNG 검색 실패 시 봇 차단 여부 진단 로그 (DESIGN.md §25)
+
+> DESIGN.md §25를 먼저 전체 읽고 시작할 것. §24(Phase 21)와 이어지는 작업이니 `app/research.py`의 현재 구조(§24에서 만든 `_attempt()` 내부 헬퍼, searx→폴백 흐름)를 먼저 파악하고 시작해.
+
+- [ ] `app/research.py`:
+  - `async def _diagnose_searxng_failure(query: str, settings: Settings) -> str` 추가. `quick_search()`와 동일한 패턴으로 `httpx`를 사용해 `{settings.searxng_url}/search`에 `format=json`으로 직접 GET(같은 `request_timeout_seconds` 사용). **절대 예외를 밖으로 던지지 말 것** — 요청/파싱 실패 시 `f"진단 실패: {exc}"` 문자열을 반환.
+  - `unresponsive_engines`가 비어 있으면 "응답 없는 엔진 없음" 계열 메시지, 하나라도 있으면 각 항목의 오류 텍스트를 소문자로 `{"captcha", "too many request", "access denied", "blocked"}`와 부분 문자열 매치해 "봉 차단 가능성 높음" 또는 "명확한 차단 신호는 아님" 계열 메시지로 분기 (DESIGN.md §25.3에 정확한 문구/형식 있음).
+  - `research_section()` 안에서 SearXNG(`"searx"`) 시도가 예외를 던지거나 빈 결과를 반환한 시점에 (폴백 재raise/시도 여부를 결정하기 전에) `_diagnose_searxng_failure(query, settings)`를 호출해 `logger.warning(...)`으로 남긴다. `logger.info`가 아니라 `logger.warning`을 써야 로그 페이지에 실제로 보인다(root logger 기본 레벨이 WARNING이라는 점, DESIGN.md §25.3에 근거 있음).
+  - 폴백 미설정 상태에서 예외가 나면: 진단 로그를 남긴 뒤 **그대로 같은 예외를 재raise**(§24에서 확립한 "폴백 미설정 시 동작 변화 없음" 회귀 조건 유지 — 로그 한 줄 추가는 이 조건을 어기지 않음).
+- [ ] `docs/setup.md`: 로그 페이지 안내 부분에 이 진단 로그와 그 한계(원본 하위 쿼리와 정확히 같지 않은 근사치라는 점, DESIGN.md §25.3 "알려진 한계" 참고)를 한 줄 추가.
+- [ ] 테스트(§25.4 그대로):
+  - `_diagnose_searxng_failure()` 단위 테스트(`respx`로 SearXNG JSON API 모킹, 기존 `test_quick_search_uses_searxng_json_api`와 같은 패턴): 빈 `unresponsive_engines`, "CAPTCHA"/"Too many requests" 포함 시, "Timeout"만 있을 때, SearXNG 요청 자체가 실패할 때(연결 오류) 각각 확인.
+  - `research_section()` 통합 테스트: `caplog`로 SearXNG 예외/빈 결과 케이스에서 WARNING 로그에 진단 문자열이 남는지, 폴백 미설정 상태에서도 최종 예외 전파/status는 §24 테스트와 동일하게 유지되는지 확인.
+- [ ] 논리 단위로 커밋 나눠서 push까지.
+
+---
+
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
 - [x] 구현 코드 리뷰 — 발견한 4건(전부 심각도 높음)을 직접 수정: `gpt-researcher` 0.16.0 import 버그 → 버전 상한 고정, DeepSeek-only 설정에서 임베딩 때문에 죽는 문제 → `EMBEDDING` 기본값 추가, `RETRIEVER` 환경변수 충돌로 2섹션 이상 `build_study_document`가 항상 실패하던 버그 → 수정, 한글 주제가 해시 폴더명으로 뭉개지던 `slugify` 버그 → 수정. 낮은 우선순위 2건(SearXNG 빈 검색 결과 조용히 통과, `SEARXNG_SECRET` 무효)은 DESIGN.md/docs/setup.md에 기록만 하고 미수정.
 - [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.
