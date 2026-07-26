@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
 
-from app.config import FALLBACK_RETRIEVER_API_KEY_ENV, Settings, load_settings
+from app.config import PAID_RETRIEVER_API_KEY_ENV, Settings, load_settings
 from app.storage import OutputStorage
 
 logger = logging.getLogger(__name__)
@@ -52,11 +53,22 @@ class _TimeoutBoundRequests:
         return getattr(self._requests_module, name)
 
 
-def _configure_gpt_researcher(
-    settings: Settings,
-    *,
-    retriever: str = "searx",
-) -> None:
+@contextlib.contextmanager
+def _temporary_env(overrides: dict[str, str]) -> Iterator[None]:
+    sentinel = object()
+    previous = {key: os.environ.get(key, sentinel) for key in overrides}
+    os.environ.update(overrides)
+    try:
+        yield
+    finally:
+        for key, old_value in previous.items():
+            if old_value is sentinel:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+
+
+def _configure_gpt_researcher(settings: Settings) -> None:
     """Bridge the public config names to GPT-Researcher's environment contract."""
     global _SEARX_REQUEST_TIMEOUT_PATCHED
     if not _SEARX_REQUEST_TIMEOUT_PATCHED:
@@ -72,12 +84,6 @@ def _configure_gpt_researcher(
         )
         _SEARX_REQUEST_TIMEOUT_PATCHED = True
 
-    # GPT-Researcher 0.16 calls its SearXNG retriever "searx" and expects
-    # SEARX_URL. Keep our DESIGN.md-facing names stable at the boundary.
-    os.environ["RETRIEVER"] = retriever
-    if retriever != "searx" and settings.fallback_retriever_api_key:
-        api_key_env = FALLBACK_RETRIEVER_API_KEY_ENV[retriever]
-        os.environ[api_key_env] = settings.fallback_retriever_api_key
     os.environ["SEARX_URL"] = str(settings.searxng_url).rstrip("/")
     os.environ["FAST_LLM"] = settings.fast_llm
     os.environ["SMART_LLM"] = settings.smart_llm
@@ -252,59 +258,51 @@ async def research_section(
         factory = researcher_factory or _default_researcher_factory
         query = _research_query(topic, section, siblings)
 
-        async def _attempt(
-            retriever_name: str,
-        ) -> tuple[str, list[dict[str, str]]]:
-            _configure_gpt_researcher(settings, retriever=retriever_name)
-            researcher = factory(
-                query=query,
-                report_type="research_report",
-                report_format="markdown",
-                parent_query=topic,
-                subtopics=siblings,
-                verbose=False,
-            )
-            await researcher.conduct_research()
-            attempt_content = await researcher.write_report(
-                custom_prompt=(
-                    "Write only this section's learning chapter. Respect the scope "
-                    "and do not cover sibling sections except for brief "
-                    "cross-references. "
-                    f"Write your entire response in {settings.output_language}, "
-                    "regardless of the language of the source material."
-                )
-            )
-            attempt_sources = _normalize_sources(
-                researcher.get_research_sources()
-            )
-            return attempt_content, attempt_sources
+        gpt_researcher_retriever = (
+            "searx"
+            if settings.retriever.lower() == "searxng"
+            else settings.retriever.lower()
+        )
+        env_overrides = {"RETRIEVER": gpt_researcher_retriever}
+        if gpt_researcher_retriever != "searx":
+            env_overrides[
+                PAID_RETRIEVER_API_KEY_ENV[settings.retriever.lower()]
+            ] = settings.retriever_api_key
 
-        searx_failure_diagnosed = False
         try:
-            content, sources = await _attempt("searx")
-            final_retriever = "searx"
+            with _temporary_env(env_overrides):
+                _configure_gpt_researcher(settings)
+                researcher = factory(
+                    query=query,
+                    report_type="research_report",
+                    report_format="markdown",
+                    parent_query=topic,
+                    subtopics=siblings,
+                    verbose=False,
+                )
+                await researcher.conduct_research()
+                content = await researcher.write_report(
+                    custom_prompt=(
+                        "Write only this section's learning chapter. Respect the "
+                        "scope and do not cover sibling sections except for brief "
+                        "cross-references. "
+                        f"Write your entire response in {settings.output_language}, "
+                        "regardless of the language of the source material."
+                    )
+                )
+                sources = _normalize_sources(researcher.get_research_sources())
         except Exception:
-            diagnosis = await _diagnose_searxng_failure(query, settings)
-            searx_failure_diagnosed = True
-            logger.warning(
-                "SearXNG 실패 진단 (섹션 %s, 주제 %r): %s",
-                section_id,
-                topic,
-                diagnosis,
-            )
-            if not settings.fallback_retriever:
-                raise
-            logger.warning(
-                "SearXNG research failed for section %s in topic %r; "
-                "trying fallback retriever %s",
-                section_id,
-                topic,
-                settings.fallback_retriever,
-                exc_info=True,
-            )
-            sources = []
+            if gpt_researcher_retriever == "searx":
+                diagnosis = await _diagnose_searxng_failure(query, settings)
+                logger.warning(
+                    "SearXNG 실패 진단 (섹션 %s, 주제 %r): %s",
+                    section_id,
+                    topic,
+                    diagnosis,
+                )
+            raise
 
-        if not sources and not searx_failure_diagnosed:
+        if not sources and gpt_researcher_retriever == "searx":
             diagnosis = await _diagnose_searxng_failure(query, settings)
             logger.warning(
                 "SearXNG 실패 진단 (섹션 %s, 주제 %r): %s",
@@ -312,24 +310,13 @@ async def research_section(
                 topic,
                 diagnosis,
             )
-
-        if not sources and settings.fallback_retriever:
-            logger.warning(
-                "SearXNG produced no sources for section %s in topic %r; "
-                "trying fallback retriever %s",
-                section_id,
-                topic,
-                settings.fallback_retriever,
-            )
-            content, sources = await _attempt(settings.fallback_retriever)
-            final_retriever = settings.fallback_retriever
 
         if sources:
             logger.info(
                 "Research for section %s in topic %r succeeded with retriever %s",
                 section_id,
                 topic,
-                final_retriever,
+                gpt_researcher_retriever,
             )
 
         content = _with_sources(content, sources)

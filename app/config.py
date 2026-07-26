@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, HttpUrl, ValidationError, model_validator
 
 
-FALLBACK_RETRIEVER_API_KEY_ENV: dict[str, str] = {
+PAID_RETRIEVER_API_KEY_ENV: dict[str, str] = {
     "tavily": "TAVILY_API_KEY",
     "serper": "SERPER_API_KEY",
     "serpapi": "SERPAPI_API_KEY",
@@ -36,8 +36,7 @@ class Settings(BaseModel):
     embedding: str = "huggingface:sentence-transformers/all-MiniLM-L6-v2"
     output_language: str = "Korean"
     retriever: str = "searxng"
-    fallback_retriever: str | None = None
-    fallback_retriever_api_key: str | None = None
+    retriever_api_key: str | None = None
     searxng_url: HttpUrl = HttpUrl("http://localhost:8080")
     site_password: str | None = None
     research_output_dir: Path = Path("./outputs")
@@ -58,20 +57,15 @@ class Settings(BaseModel):
                 "Missing LLM API key: configure DEEPSEEK_API_KEY, "
                 "ANTHROPIC_API_KEY, or OPENAI_API_KEY"
             )
-        if self.retriever.lower() != "searxng":
-            raise ValueError("RETRIEVER must be 'searxng' for local research")
-        if (
-            self.fallback_retriever
-            and self.fallback_retriever not in FALLBACK_RETRIEVER_API_KEY_ENV
-        ):
-            allowed = ", ".join(FALLBACK_RETRIEVER_API_KEY_ENV)
+        retriever = self.retriever.lower()
+        if retriever not in {"searxng", *PAID_RETRIEVER_API_KEY_ENV}:
+            allowed = ", ".join(["searxng", *PAID_RETRIEVER_API_KEY_ENV])
+            raise ValueError(f"RETRIEVER must be one of: {allowed}")
+        if retriever != "searxng" and not self.retriever_api_key:
+            api_key_env = PAID_RETRIEVER_API_KEY_ENV[retriever]
             raise ValueError(
-                f"FALLBACK_RETRIEVER must be one of: {allowed}"
-            )
-        if self.fallback_retriever and not self.fallback_retriever_api_key:
-            raise ValueError(
-                "FALLBACK_RETRIEVER를 설정하려면 "
-                "FALLBACK_RETRIEVER_API_KEY도 필요합니다"
+                f"RETRIEVER={retriever}를 쓰려면 "
+                f"{api_key_env}도 설정해야 합니다"
             )
         return self
 
@@ -83,6 +77,8 @@ def load_settings(
 ) -> Settings:
     """Load `.env` and validate application settings."""
     load_dotenv(dotenv_path=env_file, override=False)
+    retriever = os.getenv("RETRIEVER", "searxng")
+    retriever_api_key_env = PAID_RETRIEVER_API_KEY_ENV.get(retriever.lower())
     values = {
         "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY") or None,
         "openai_api_key": os.getenv("OPENAI_API_KEY") or None,
@@ -101,17 +97,11 @@ def load_settings(
             "OUTPUT_LANGUAGE",
             Settings.model_fields["output_language"].default,
         ),
-        # Fixed, not read from os.environ["RETRIEVER"]: _configure_gpt_researcher
-        # overwrites that same env var with GPT-Researcher's internal retriever
-        # name ("searx") as a side effect, which would make every load_settings()
-        # call after the first one in a long-lived process see "searx" and fail
-        # this field's "must be searxng" validation. This field only exists to
-        # assert the local-only design invariant, so it is never meant to be
-        # user-configurable via the environment.
-        "retriever": "searxng",
-        "fallback_retriever": os.getenv("FALLBACK_RETRIEVER") or None,
-        "fallback_retriever_api_key": (
-            os.getenv("FALLBACK_RETRIEVER_API_KEY") or None
+        "retriever": retriever,
+        "retriever_api_key": (
+            os.getenv(retriever_api_key_env) or None
+            if retriever_api_key_env
+            else None
         ),
         "searxng_url": os.getenv("SEARXNG_URL", "http://localhost:8080"),
         "site_password": os.getenv("SITE_PASSWORD") or None,
