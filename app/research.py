@@ -139,7 +139,7 @@ async def research_section(
     )
     if manifest_section is None:
         raise ValueError(f"section_id {section_id!r} is missing from manifest.json")
-    section_path = storage.section_path(section_id, section["title"])
+    section_path = storage.topic_dir / manifest_section["path"]
 
     if manifest_section.get("status") == "done" and not force:
         try:

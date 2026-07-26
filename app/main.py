@@ -293,7 +293,7 @@ def create_app(
         )
         if section is None or section.get("status") != "done":
             raise HTTPException(status_code=404, detail="Section document not found")
-        section_path = storage.section_path(section_id, str(section.get("title", "")))
+        section_path = storage.topic_dir / str(section.get("path", ""))
         if not section_path.is_file():
             raise HTTPException(status_code=404, detail="Section document not found")
         return PlainTextResponse(

@@ -61,7 +61,13 @@ def assemble_study_document(
             lines.extend(["", section.get("description", "")])
             continue
 
-        section_path = storage.section_path(section_id, section["title"])
+        if not state.get("path"):
+            lines.append(
+                "> **파일 누락:** manifest에는 완료로 표시되지만 섹션 파일 "
+                "경로가 없습니다."
+            )
+            continue
+        section_path = storage.topic_dir / state["path"]
         try:
             content = section_path.read_text(encoding="utf-8").strip()
         except FileNotFoundError:
