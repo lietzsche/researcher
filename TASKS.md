@@ -145,10 +145,10 @@
 - [x] 기존 `test_toc.py`/`test_research.py`/`test_assemble.py`/`test_storage.py`는 import 경로만 `app.`으로 바꿔서 그대로 통과해야 함 (로직 변경 금지)
 
 ### 12.8 실사용 검증
-- [ ] 로컬(WSL 등)에서 `docker compose up -d`로 전체 스택(redis/searxng/app/cloudflared) 기동 확인
-- [ ] `scripts/get-tunnel-url.sh`로 뽑은 URL로 실제 브라우저 접속 → 주제 생성 → 목차 확인 → 섹션 1개 리서치 → 다운로드 → 삭제까지 전 과정 curl 또는 브라우저로 최소 1회 실행
-- [ ] `SITE_PASSWORD` 없이 접속 시 401(또는 정책에 맞는 거부)이 실제로 뜨는지 확인
-- [ ] 결과를 커밋 메시지에 남길 것
+- [x] 로컬(WSL 등)에서 `docker compose up -d`로 전체 스택(redis/searxng/app/cloudflared) 기동 확인
+- [x] `scripts/get-tunnel-url.sh`로 뽑은 URL로 실제 브라우저 접속 → 주제 생성 → 목차 확인 → 섹션 1개 리서치 → 다운로드 → 삭제까지 전 과정 curl 또는 브라우저로 최소 1회 실행
+- [x] `SITE_PASSWORD` 없이 접속 시 401(또는 정책에 맞는 거부)이 실제로 뜨는지 확인
+- [x] 결과를 커밋 메시지에 남길 것
 
 ### 12.9 커밋 규율
 - [ ] 논리 단위로 커밋 분리 (예: 삭제/이름변경 → config 정리 → API → jobs → 프론트엔드 → Docker/배포 → 테스트), `.env`/비밀번호가 커밋에 안 들어가는지 확인 후 push
