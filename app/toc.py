@@ -184,10 +184,17 @@ async def generate_toc(
 
     root = output_root or os.getenv("RESEARCH_OUTPUT_DIR", "./outputs")
     storage = OutputStorage(root, topic)
+    created_at = None
+    if storage.manifest_path.is_file():
+        created_at = storage.load_manifest().get("created_at")
     storage.ensure_structure()
     storage.write_json(storage.toc_json_path, sections)
     storage.write_text(storage.toc_markdown_path, toc_to_markdown(topic, sections))
-    manifest = storage.initialize_manifest(depth=depth, sections=sections)
+    manifest = storage.initialize_manifest(
+        depth=depth,
+        sections=sections,
+        created_at=created_at,
+    )
     return {
         "toc": sections,
         "toc_path": str(storage.toc_json_path),

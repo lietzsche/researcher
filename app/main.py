@@ -27,8 +27,7 @@ from app.export import build_excel_workbook, build_section_zip
 from app.jobs import SerialJobQueue
 from app.logs import InMemoryLogHandler
 from app.schemas import GenerateTocInput
-from app.storage import OutputStorage
-from app.toc import generate_toc
+from app.storage import OutputStorage, reconcile_stale_jobs
 
 logger = logging.getLogger(__name__)
 security = HTTPBasic(auto_error=False)
@@ -56,6 +55,14 @@ class JobQueue(Protocol):
         *,
         sections_filter: list[str] | None = None,
         force_regenerate: bool = False,
+    ) -> None: ...
+
+    async def enqueue_toc_generation(
+        self,
+        topic: str,
+        *,
+        depth: str,
+        num_sections: int | None,
     ) -> None: ...
 
 
@@ -102,8 +109,13 @@ def _topic_storage(settings: Settings, slug: str) -> OutputStorage:
 
 def _topic_detail(storage: OutputStorage) -> dict[str, Any]:
     try:
-        toc = storage.read_json(storage.toc_json_path)
         manifest = storage.load_manifest()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Topic not found") from None
+    if manifest.get("toc_status", "done") != "done":
+        return {"toc": [], "manifest": manifest}
+    try:
+        toc = storage.read_json(storage.toc_json_path)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Topic not found") from None
     return {"toc": toc, "manifest": manifest}
@@ -118,6 +130,7 @@ def _topic_summary(manifest: dict[str, Any], topic_dir: Path) -> dict[str, Any]:
         "depth": manifest.get("depth"),
         "created_at": manifest.get("created_at"),
         "updated_at": manifest.get("updated_at"),
+        "toc_status": manifest.get("toc_status", "done"),
         "completed_sections": completed,
         "total_sections": len(sections),
         "has_study_document": (topic_dir / "study_document.md").is_file(),
@@ -127,7 +140,6 @@ def _topic_summary(manifest: dict[str, Any], topic_dir: Path) -> dict[str, Any]:
 def create_app(
     *,
     settings: Settings | None = None,
-    toc_generator: Callable[..., Any] = generate_toc,
     job_queue: JobQueue | None = None,
 ) -> FastAPI:
     """Build an application, allowing lightweight dependency injection in tests."""
@@ -144,6 +156,7 @@ def create_app(
             application.state.settings.research_output_dir.mkdir(
                 parents=True, exist_ok=True
             )
+            reconcile_stale_jobs(application.state.settings.research_output_dir)
             if application.state.settings.site_password is None:
                 logger.warning(
                     "SITE_PASSWORD is not set; the web application is running "
@@ -191,21 +204,19 @@ def create_app(
         handler: InMemoryLogHandler = request.app.state.log_handler
         return handler.get_records(after_id=after_id, limit=limit)
 
-    @application.post("/api/topics", status_code=status.HTTP_201_CREATED)
+    @application.post("/api/topics", status_code=status.HTTP_202_ACCEPTED)
     async def create_topic(payload: GenerateTocInput, request: Request) -> dict[str, Any]:
         current_settings = _settings(request)
         candidate = OutputStorage(current_settings.research_output_dir, payload.topic)
         if candidate.manifest_path.exists():
             raise HTTPException(status_code=409, detail="Topic already exists")
-        try:
-            return await toc_generator(
-                payload.topic,
-                depth=payload.depth,
-                num_sections=payload.num_sections,
-                output_root=current_settings.research_output_dir,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        candidate.initialize_pending_manifest(depth=payload.depth)
+        await _queue(request).enqueue_toc_generation(
+            payload.topic,
+            depth=payload.depth,
+            num_sections=payload.num_sections,
+        )
+        return {"slug": candidate.topic_slug, "status": "queued"}
 
     @application.get("/api/topics")
     async def list_topics(request: Request) -> list[dict[str, Any]]:
@@ -274,7 +285,7 @@ def create_app(
     ) -> dict[str, str]:
         storage = _topic_storage(_settings(request), slug)
         manifest = storage.load_manifest()
-        if any(
+        if manifest.get("toc_status") == "generating" or any(
             section.get("status") == "in_progress"
             for section in manifest.get("sections", [])
         ):
@@ -365,7 +376,7 @@ def create_app(
     async def delete_topic(slug: str, request: Request) -> Response:
         storage = _topic_storage(_settings(request), slug)
         manifest = storage.load_manifest()
-        if any(
+        if manifest.get("toc_status") == "generating" or any(
             section.get("status") == "in_progress"
             for section in manifest.get("sections", [])
         ):

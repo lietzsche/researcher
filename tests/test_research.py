@@ -93,6 +93,29 @@ def test_config_loads_section_timeout(
     assert settings.section_timeout_seconds == 120
 
 
+def test_config_defaults_and_loads_toc_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("TOC_TIMEOUT_SECONDS", raising=False)
+    assert load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    ).toc_timeout_seconds == 180
+
+    monkeypatch.setenv("TOC_TIMEOUT_SECONDS", "75")
+    assert load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    ).toc_timeout_seconds == 75
+
+
+@pytest.mark.parametrize("value", [0, 1201])
+def test_config_rejects_out_of_range_toc_timeout(value: int) -> None:
+    with pytest.raises(ValueError):
+        Settings(require_api_key=False, toc_timeout_seconds=value)
+
+
 def test_config_loads_max_concurrent_research(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

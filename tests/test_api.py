@@ -16,10 +16,12 @@ from app.toc import toc_to_markdown
 
 
 class FakeQueue:
-    def __init__(self) -> None:
+    def __init__(self, output_root: Path | None = None) -> None:
         self.started = False
+        self.output_root = output_root
         self.section_jobs: list[tuple[str, str, bool]] = []
         self.build_jobs: list[tuple[str, list[str] | None, bool]] = []
+        self.toc_jobs: list[tuple[str, str, int | None]] = []
 
     async def start(self) -> None:
         self.started = True
@@ -44,6 +46,22 @@ class FakeQueue:
         force_regenerate: bool = False,
     ) -> None:
         self.build_jobs.append((topic, sections_filter, force_regenerate))
+
+    async def enqueue_toc_generation(
+        self,
+        topic: str,
+        *,
+        depth: str,
+        num_sections: int | None,
+    ) -> None:
+        self.toc_jobs.append((topic, depth, num_sections))
+        if self.output_root is not None:
+            await fake_toc_generator_factory(self.output_root)(
+                topic,
+                depth=depth,
+                num_sections=num_sections,
+                output_root=self.output_root,
+            )
 
 
 def fake_toc_generator_factory(output_root: Path):
@@ -89,10 +107,9 @@ def fake_toc_generator_factory(output_root: Path):
 @pytest.fixture
 def api_client(tmp_path: Path) -> tuple[TestClient, FakeQueue, Settings]:
     settings = Settings(require_api_key=False, research_output_dir=tmp_path)
-    queue = FakeQueue()
+    queue = FakeQueue(tmp_path)
     application = create_app(
         settings=settings,
-        toc_generator=fake_toc_generator_factory(tmp_path),
         job_queue=queue,
     )
     with TestClient(application) as client:
@@ -106,8 +123,11 @@ def test_all_topic_routes(api_client: tuple[TestClient, FakeQueue, Settings]) ->
         "/api/topics",
         json={"topic": "API Test Topic", "depth": "standard", "num_sections": 2},
     )
-    assert created.status_code == 201
-    slug = created.json()["manifest"]["topic_slug"]
+    assert created.status_code == 202
+    slug = created.json()["slug"]
+    created_manifest = OutputStorage(
+        settings.research_output_dir, "API Test Topic"
+    ).load_manifest()
 
     topics = client.get("/api/topics")
     assert topics.status_code == 200
@@ -116,8 +136,9 @@ def test_all_topic_routes(api_client: tuple[TestClient, FakeQueue, Settings]) ->
             "topic": "API Test Topic",
             "slug": slug,
             "depth": "standard",
-            "created_at": created.json()["manifest"]["created_at"],
-            "updated_at": created.json()["manifest"]["updated_at"],
+            "created_at": created_manifest["created_at"],
+            "updated_at": created_manifest["updated_at"],
+            "toc_status": "done",
             "completed_sections": 0,
             "total_sections": 2,
             "has_study_document": False,
@@ -245,7 +266,7 @@ def test_api_reports_not_found_and_conflict(
         "/api/topics",
         json={"topic": "Conflict Topic", "depth": "standard", "num_sections": 2},
     )
-    slug = created.json()["manifest"]["topic_slug"]
+    slug = created.json()["slug"]
     assert client.post(
         "/api/topics",
         json={"topic": "Conflict Topic", "depth": "standard", "num_sections": 2},
@@ -262,6 +283,54 @@ def test_api_reports_not_found_and_conflict(
     )
 
 
+def test_create_topic_returns_pending_state_without_waiting_for_toc(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(require_api_key=False, research_output_dir=tmp_path)
+    queue = FakeQueue()
+    with TestClient(create_app(settings=settings, job_queue=queue)) as client:
+        created = client.post(
+            "/api/topics",
+            json={"topic": "Queued Topic", "depth": "deep", "num_sections": 8},
+        )
+        slug = created.json()["slug"]
+        detail = client.get(f"/api/topics/{slug}")
+        blocked_delete = client.delete(f"/api/topics/{slug}")
+
+    assert created.status_code == 202
+    assert created.json() == {"slug": "queued-topic", "status": "queued"}
+    assert queue.toc_jobs == [("Queued Topic", "deep", 8)]
+    assert detail.status_code == 200
+    assert detail.json()["toc"] == []
+    assert detail.json()["manifest"]["toc_status"] == "generating"
+    assert blocked_delete.status_code == 409
+
+
+def test_app_startup_reconciles_stale_toc_and_section_jobs(tmp_path: Path) -> None:
+    generating = OutputStorage(tmp_path, "Interrupted TOC")
+    generating.initialize_pending_manifest(depth="standard")
+    researching = OutputStorage(tmp_path, "Interrupted Research")
+    researching.initialize_manifest(
+        depth="standard",
+        sections=[{"id": "01", "title": "Section"}],
+    )
+    researching.write_json(
+        researching.toc_json_path,
+        [{"id": "01", "title": "Section"}],
+    )
+    researching.update_section("01", status="in_progress")
+
+    settings = Settings(require_api_key=False, research_output_dir=tmp_path)
+    with TestClient(create_app(settings=settings, job_queue=FakeQueue())) as client:
+        toc_detail = client.get(f"/api/topics/{generating.topic_slug}").json()
+        section_detail = client.get(f"/api/topics/{researching.topic_slug}").json()
+        assert client.delete(f"/api/topics/{generating.topic_slug}").status_code == 204
+
+    assert toc_detail["manifest"]["toc_status"] == "error"
+    assert toc_detail["manifest"]["toc_error"] == "서버 재시작으로 목차 생성이 중단됨"
+    assert section_detail["manifest"]["sections"][0]["status"] == "pending"
+
+
 def test_research_section_rejects_redo_of_done_section_without_force(
     api_client: tuple[TestClient, FakeQueue, Settings],
 ) -> None:
@@ -270,7 +339,7 @@ def test_research_section_rejects_redo_of_done_section_without_force(
         "/api/topics",
         json={"topic": "Done Section Topic", "depth": "standard", "num_sections": 2},
     )
-    slug = created.json()["manifest"]["topic_slug"]
+    slug = created.json()["slug"]
     storage = OutputStorage(settings.research_output_dir, "Done Section Topic")
     storage.update_section("01", status="done")
 
@@ -294,7 +363,7 @@ def test_get_section_document_only_returns_completed_sections(
         "/api/topics",
         json={"topic": "Section Document Topic", "depth": "standard", "num_sections": 2},
     )
-    slug = created.json()["manifest"]["topic_slug"]
+    slug = created.json()["slug"]
     storage = OutputStorage(settings.research_output_dir, "Section Document Topic")
     manifest = storage.update_section("01", status="done")
     completed_section = manifest["sections"][0]
@@ -320,7 +389,7 @@ def test_get_section_document_uses_manifest_path_after_title_drift(
         "/api/topics",
         json={"topic": "Drifted API Topic", "depth": "standard", "num_sections": 2},
     )
-    slug = created.json()["manifest"]["topic_slug"]
+    slug = created.json()["slug"]
     storage = OutputStorage(settings.research_output_dir, "Drifted API Topic")
     manifest = storage.load_manifest()
     section = manifest["sections"][0]
@@ -453,6 +522,81 @@ async def test_job_queue_timeout_marks_error_and_processes_next_job(
     assert [
         section["status"] for section in storage.load_manifest()["sections"]
     ] == ["error", "done"]
+
+
+@pytest.mark.asyncio
+async def test_job_queue_generates_toc_with_queued_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = OutputStorage(tmp_path, "Queued TOC")
+    pending = storage.initialize_pending_manifest(depth="deep")
+    calls: list[tuple[str, str, int | None, Path]] = []
+
+    async def fake_generate_toc(
+        topic: str,
+        *,
+        depth: str,
+        num_sections: int | None,
+        output_root: Path,
+    ) -> dict[str, Any]:
+        calls.append((topic, depth, num_sections, output_root))
+        return storage.initialize_manifest(
+            depth=depth,
+            sections=[{"id": "01", "title": "Generated"}],
+            created_at=pending["created_at"],
+        )
+
+    monkeypatch.setattr(jobs_module, "generate_toc", fake_generate_toc)
+    queue = SerialJobQueue(
+        Settings(require_api_key=False, research_output_dir=tmp_path)
+    )
+    await queue.start()
+    try:
+        await queue.enqueue_toc_generation(
+            "Queued TOC", depth="deep", num_sections=7
+        )
+        await queue.join()
+    finally:
+        await queue.stop()
+
+    assert calls == [("Queued TOC", "deep", 7, tmp_path)]
+    assert storage.load_manifest()["toc_status"] == "done"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("times_out", [False, True])
+async def test_job_queue_marks_toc_error_on_failure_or_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    times_out: bool,
+) -> None:
+    topic = "TOC Timeout" if times_out else "TOC Failure"
+    storage = OutputStorage(tmp_path, topic)
+    storage.initialize_pending_manifest(depth="standard")
+
+    async def fake_generate_toc(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        if times_out:
+            await asyncio.sleep(1)
+        raise RuntimeError("generation failed")
+
+    monkeypatch.setattr(jobs_module, "generate_toc", fake_generate_toc)
+    settings = Settings(require_api_key=False, research_output_dir=tmp_path)
+    if times_out:
+        settings.toc_timeout_seconds = 0.01
+    queue = SerialJobQueue(settings)
+    await queue.start()
+    try:
+        await queue.enqueue_toc_generation(
+            topic, depth="standard", num_sections=None
+        )
+        await queue.join()
+    finally:
+        await queue.stop()
+
+    manifest = storage.load_manifest()
+    assert manifest["toc_status"] == "error"
+    assert manifest["toc_error"] == ("" if times_out else "generation failed")
 
 
 @pytest.mark.asyncio

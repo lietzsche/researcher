@@ -11,16 +11,19 @@ from app.assemble import assemble_study_document
 from app.config import Settings
 from app.research import research_section
 from app.storage import OutputStorage
+from app.toc import generate_toc
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
 class ResearchJob:
-    kind: Literal["section", "build"]
+    kind: Literal["section", "build", "toc"]
     topic: str
-    section_ids: tuple[str, ...]
+    section_ids: tuple[str, ...] = ()
     force: bool = False
+    depth: str = "standard"
+    num_sections: int | None = None
 
 
 class SerialJobQueue:
@@ -99,6 +102,22 @@ class SerialJobQueue:
             )
         )
 
+    async def enqueue_toc_generation(
+        self,
+        topic: str,
+        *,
+        depth: str,
+        num_sections: int | None,
+    ) -> None:
+        await self._queue.put(
+            ResearchJob(
+                kind="toc",
+                topic=topic,
+                depth=depth,
+                num_sections=num_sections,
+            )
+        )
+
     async def join(self) -> None:
         """Wait until all queued jobs finish; primarily useful for tests."""
         await self._queue.join()
@@ -109,8 +128,10 @@ class SerialJobQueue:
             try:
                 if job.kind == "section":
                     await self._research_one(job, job.section_ids[0])
-                else:
+                elif job.kind == "build":
                     await self._run_build(job)
+                else:
+                    await self._generate_toc(job)
             except asyncio.CancelledError:
                 raise
             except BaseException:
@@ -121,6 +142,28 @@ class SerialJobQueue:
                 )
             finally:
                 self._queue.task_done()
+
+    async def _generate_toc(self, job: ResearchJob) -> None:
+        storage = OutputStorage(self.settings.research_output_dir, job.topic)
+        try:
+            await asyncio.wait_for(
+                generate_toc(
+                    job.topic,
+                    depth=job.depth,
+                    num_sections=job.num_sections,
+                    output_root=self.settings.research_output_dir,
+                ),
+                timeout=self.settings.toc_timeout_seconds,
+            )
+        except BaseException as exc:
+            try:
+                storage.mark_toc_error(str(exc))
+            except (FileNotFoundError, ValueError):
+                logger.exception(
+                    "Could not record failed TOC generation for topic %r",
+                    job.topic,
+                )
+            raise
 
     async def _research_one(self, job: ResearchJob, section_id: str) -> None:
         storage = OutputStorage(self.settings.research_output_dir, job.topic)

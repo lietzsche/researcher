@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
@@ -14,6 +15,7 @@ from typing import Any
 
 _SAFE_SLUG = re.compile(r"[^\w]+", re.UNICODE)
 _SAFE_SECTION_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+logger = logging.getLogger(__name__)
 
 
 def utc_now() -> str:
@@ -95,15 +97,17 @@ class OutputStorage:
         *,
         depth: str,
         sections: list[dict[str, Any]],
+        created_at: str | None = None,
     ) -> dict[str, Any]:
         """Create a fresh manifest with each TOC section pending."""
-        created_at = utc_now()
+        created_at = created_at or utc_now()
         manifest = {
             "topic": self.topic,
             "topic_slug": self.topic_slug,
             "created_at": created_at,
             "updated_at": created_at,
             "depth": depth,
+            "toc_status": "done",
             "sections": [
                 {
                     "id": section["id"],
@@ -119,6 +123,30 @@ class OutputStorage:
                 for section in sections
             ],
         }
+        self.save_manifest(manifest)
+        return manifest
+
+    def initialize_pending_manifest(self, *, depth: str) -> dict[str, Any]:
+        """Persist the minimal state required while TOC generation is queued."""
+        created_at = utc_now()
+        manifest = {
+            "topic": self.topic,
+            "topic_slug": self.topic_slug,
+            "created_at": created_at,
+            "updated_at": created_at,
+            "depth": depth,
+            "toc_status": "generating",
+            "sections": [],
+        }
+        self.save_manifest(manifest)
+        return manifest
+
+    def mark_toc_error(self, message: str) -> dict[str, Any]:
+        """Record a failed asynchronous TOC generation."""
+        manifest = self.load_manifest()
+        manifest["toc_status"] = "error"
+        manifest["toc_error"] = message
+        manifest["updated_at"] = utc_now()
         self.save_manifest(manifest)
         return manifest
 
@@ -163,3 +191,37 @@ class OutputStorage:
         except BaseException:
             temporary_path.unlink(missing_ok=True)
             raise
+
+
+def reconcile_stale_jobs(output_root: str | Path) -> None:
+    """Recover job states left behind by a previous server process."""
+    root = Path(output_root).expanduser().resolve()
+    if not root.exists():
+        return
+    for topic_dir in root.iterdir():
+        manifest_path = topic_dir / "manifest.json"
+        if not topic_dir.is_dir() or not manifest_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict):
+                raise ValueError("manifest must be a JSON object")
+            changed = False
+            if manifest.get("toc_status") == "generating":
+                manifest["toc_status"] = "error"
+                manifest["toc_error"] = "서버 재시작으로 목차 생성이 중단됨"
+                changed = True
+            for section in manifest.get("sections", []):
+                if section.get("status") == "in_progress":
+                    section["status"] = "pending"
+                    changed = True
+            if changed:
+                manifest["updated_at"] = utc_now()
+                payload = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+                OutputStorage._atomic_write(manifest_path, payload)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            logger.warning(
+                "Skipping unreadable manifest during stale-job reconciliation: %s",
+                manifest_path,
+                exc_info=True,
+            )
