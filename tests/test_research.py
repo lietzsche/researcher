@@ -49,6 +49,34 @@ def test_config_accepts_deepseek_key_only(
     assert settings.strategic_llm == "deepseek:deepseek-v4-pro"
 
 
+def test_config_defaults_output_language_to_korean(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("OUTPUT_LANGUAGE", raising=False)
+
+    settings = load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    )
+
+    assert settings.output_language == "Korean"
+
+
+def test_config_loads_output_language_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("OUTPUT_LANGUAGE", "Japanese")
+
+    settings = load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    )
+
+    assert settings.output_language == "Japanese"
+
+
 def test_configure_gpt_researcher_uses_native_deepseek_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -197,3 +225,51 @@ async def test_research_section_passes_sibling_scope_and_caches(
     ]
     assert second["cached"] is True
     assert storage.load_manifest()["sections"][0]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_research_section_includes_output_language_in_custom_prompt(
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, str] = {}
+
+    class FakeResearcher:
+        async def conduct_research(self) -> None:
+            return None
+
+        async def write_report(self, **kwargs: object) -> str:
+            captured["custom_prompt"] = str(kwargs["custom_prompt"])
+            return "지정된 언어로 작성된 섹션 본문"
+
+        def get_research_sources(self) -> list[dict[str, str]]:
+            return []
+
+    toc = [
+        {
+            "id": "01",
+            "title": "언어 지시 검증",
+            "description": "최종 결과물의 언어를 검증합니다.",
+            "subsections": [],
+        }
+    ]
+    storage = OutputStorage(tmp_path, "언어 설정 테스트")
+    storage.write_json(storage.toc_json_path, toc)
+    storage.initialize_manifest(depth="standard", sections=toc)
+    settings = Settings(
+        anthropic_api_key="test-key",
+        output_language="Japanese",
+    )
+
+    await research_section(
+        "언어 설정 테스트",
+        "01",
+        output_root=tmp_path,
+        settings=settings,
+        researcher_factory=lambda **_kwargs: FakeResearcher(),
+    )
+
+    assert (
+        "Write your entire response in Japanese, regardless of the language "
+        "of the source material."
+        in captured["custom_prompt"]
+    )

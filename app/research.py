@@ -172,7 +172,9 @@ async def research_section(
         content = await researcher.write_report(
             custom_prompt=(
                 "Write only this section's learning chapter. Respect the scope and "
-                "do not cover sibling sections except for brief cross-references."
+                "do not cover sibling sections except for brief cross-references. "
+                f"Write your entire response in {settings.output_language}, "
+                "regardless of the language of the source material."
             )
         )
         sources = _normalize_sources(researcher.get_research_sources())

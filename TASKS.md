@@ -201,18 +201,18 @@
 
 > Phase 14 완료 후 실사용 중 발견된 이슈. **범위 정정**: 검색(리서치) 과정을 한글로 강제하는 게 아니라, 리서치가 끝난 뒤 나오는 섹션 본문(결과물)만 한글로 나오면 된다 — 검색어/SearXNG 언어 필터/`_research_query()`는 이번 범위에서 건드리지 않는다. 원인 조사는 DESIGN.md §18에 이미 끝나 있음 — `LANGUAGE` 환경변수 설정은 효과 없다는 것도 확인됐으니 그 방향으로 고치지 말 것.
 
-- [ ] `app/config.py`: `Settings`에 `output_language: str = "Korean"`(env `OUTPUT_LANGUAGE`) 필드 하나만 추가, `load_settings()`에서 env 로딩
-- [ ] `app/research.py`: `research_section()`의 `write_report(custom_prompt=...)` 문자열에 다음 한 줄만 추가 (DESIGN.md §18.2 그대로):
+- [x] `app/config.py`: `Settings`에 `output_language: str = "Korean"`(env `OUTPUT_LANGUAGE`) 필드 하나만 추가, `load_settings()`에서 env 로딩
+- [x] `app/research.py`: `research_section()`의 `write_report(custom_prompt=...)` 문자열에 다음 한 줄만 추가 (DESIGN.md §18.2 그대로):
   ```python
   f"Write your entire response in {settings.output_language}, "
   "regardless of the language of the source material."
   ```
-- [ ] `_research_query()`(서브쿼리/검색 프롬프트), `quick_search()`, `searxng/settings.yml`, `toc.py`는 **건드리지 않는다** — 이번 Phase의 핵심 결정이니 임의로 확장하지 말 것
-- [ ] `tests/test_research.py`: `research_section()`이 구성하는 `custom_prompt`(fake researcher factory가 캡처한 값)에 `settings.output_language` 값이 포함되는지 테스트 추가
-- [ ] config 기본값 테스트: `output_language == "Korean"`
-- [ ] 실제로 `research_section`을 한글 주제로 1회 실행해 섹션 본문 서술이 한글로 나오는지 확인 (출처 URL/제목은 원문 언어 그대로가 정상이니 그건 확인 대상 아님). 결과를 커밋 메시지에 남길 것
-- [ ] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마
-- [ ] 논리 단위로 커밋 나눠서 push까지
+- [x] `_research_query()`(서브쿼리/검색 프롬프트), `quick_search()`, `searxng/settings.yml`, `toc.py`는 **건드리지 않는다** — 이번 Phase의 핵심 결정이니 임의로 확장하지 말 것
+- [x] `tests/test_research.py`: `research_section()`이 구성하는 `custom_prompt`(fake researcher factory가 캡처한 값)에 `settings.output_language` 값이 포함되는지 테스트 추가
+- [x] config 기본값 테스트: `output_language == "Korean"`
+- [x] 실제로 `research_section`을 한글 주제로 1회 실행해 섹션 본문 서술이 한글로 나오는지 확인 (출처 URL/제목은 원문 언어 그대로가 정상이니 그건 확인 대상 아님). 결과를 커밋 메시지에 남길 것
+- [x] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마
+- [x] 논리 단위로 커밋 나눠서 push까지
 
 ---
 
