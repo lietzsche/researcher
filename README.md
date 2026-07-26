@@ -25,7 +25,11 @@ curl 'http://localhost:8080/search?q=test&format=json'
 함께 변경합니다.
 
 `.env`는 Git에서 제외됩니다. SearXNG는 `127.0.0.1:8080`에만
-바인딩되며 MCP 서버는 stdio transport만 사용합니다.
+바인딩되며 MCP 서버는 기본적으로 stdio transport만 사용합니다. Claude
+Code/Codex CLI가 없는 환경이나 claude.ai 웹에서 붙이고 싶다면
+[docs/setup.md §7](./docs/setup.md#7-원격-접속-선택-cloudflare-quick-tunnel)의
+선택적 원격(streamable-http + 토큰 인증 + Cloudflare Quick Tunnel) 모드를
+참고하세요.
 
 ## MCP 클라이언트 연결
 

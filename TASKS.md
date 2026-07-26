@@ -97,5 +97,5 @@
 - [x] 구현 코드 리뷰 — 발견한 4건(전부 심각도 높음)을 직접 수정: `gpt-researcher` 0.16.0 import 버그 → 버전 상한 고정, DeepSeek-only 설정에서 임베딩 때문에 죽는 문제 → `EMBEDDING` 기본값 추가, `RETRIEVER` 환경변수 충돌로 2섹션 이상 `build_study_document`가 항상 실패하던 버그 → 수정, 한글 주제가 해시 폴더명으로 뭉개지던 `slugify` 버그 → 수정. 낮은 우선순위 2건(SearXNG 빈 검색 결과 조용히 통과, `SEARXNG_SECRET` 무효)은 DESIGN.md/docs/setup.md에 기록만 하고 미수정.
 - [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.
 - [x] `docs/setup.md` 사용법 문서 작성
-- [ ] Phase 11 완료 후: 코드 리뷰, 로컬 stdio 모드가 영향받지 않는지 회귀 확인, 실제 터널을 통해 Claude Code CLI와 (가능하면) claude.ai 웹 커스텀 커넥터 연결까지 검증, `docs/setup.md`에 "원격 접속 (선택)" 섹션 작성
+- [x] Phase 11 완료 후: 코드 리뷰 완료 (설계대로 구현됨, 추가 버그 없음). 로컬 stdio 모드 회귀 없음 확인 (`.env`에 원격 변수 미설정 시 `mcp_transport="stdio"`, `token_verifier=None` 그대로). streamable-http 서버를 직접 띄워 `curl`로 무인증/오답 토큰(401), 정답 토큰(200), 터널 Host 헤더를 흉내낸 요청(200)까지 독립적으로 재검증 완료. claude.ai 웹 커스텀 커넥터는 브라우저 UI 라이브 검증까지는 못함 — docs/setup.md 7.3에 미검증임을 명시. `docs/setup.md`에 "7. 원격 접속 (선택)" 섹션 작성, README.md의 stdio-only 문구도 갱신.
 - [ ] (향후, 별도 설계) 오디오 오버뷰 파이프라인 설계
