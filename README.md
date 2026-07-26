@@ -36,6 +36,10 @@ Code/Codex CLI가 없는 환경이나 claude.ai 웹에서 붙이고 싶다면
 선택적 원격(streamable-http + 토큰 인증 + Cloudflare Quick Tunnel) 모드를
 참고하세요.
 
+ChatGPT에 연결하려면 정적 Bearer 토큰과 OAuth 2.1의 차이를 포함한
+[ChatGPT + Cloudflare Quick Tunnel 가이드](./docs/chatgpt-cloudflare-quick-tunnel.md)를
+먼저 확인하세요.
+
 ## MCP 클라이언트 연결
 
 저장소의 [`.mcp.json`](./.mcp.json)은 실행 시점에 `git rev-parse

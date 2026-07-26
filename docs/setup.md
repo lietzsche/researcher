@@ -124,7 +124,7 @@ outputs/<topic-slug>/
 
 ## 7. 원격 접속 (선택, Cloudflare Quick Tunnel)
 
-기본값은 여전히 로컬 stdio입니다. 아래 설정을 아무것도 하지 않으면 지금까지와 100% 동일하게 동작합니다. Claude Code CLI/Codex CLI가 설치되지 않은 다른 기기나 claude.ai 웹에서도 이 서버를 쓰고 싶을 때만 이 섹션을 따라 하세요. 설계 근거는 [DESIGN.md §14](../DESIGN.md#14-원격-접속-옵션-cloudflare-quick-tunnel-선택-기능)를 참고하세요.
+기본값은 여전히 로컬 stdio입니다. 아래 설정을 아무것도 하지 않으면 지금까지와 100% 동일하게 동작합니다. Claude Code CLI/Codex CLI가 설치되지 않은 다른 기기에서 이 서버를 쓰고 싶을 때만 이 섹션을 따라 하세요. ChatGPT 등록과 인증 호환성은 별도 [ChatGPT + Cloudflare Quick Tunnel 가이드](./chatgpt-cloudflare-quick-tunnel.md)를 먼저 읽으세요. 설계 근거는 [DESIGN.md §14](../DESIGN.md#14-원격-접속-옵션-cloudflare-quick-tunnel-선택-기능)를 참고하세요.
 
 ### 7.1 원격 모드 켜기
 
@@ -183,7 +183,9 @@ codex mcp add deep-research-remote --url "$TUNNEL_URL/mcp" \
 
 (`~/.codex/config.toml`에는 `url` + `bearer_token_env_var` 키로 저장됩니다.)
 
-**claude.ai 웹 (커스텀 커넥터)**: 설정의 커스텀 커넥터 추가 화면에서 `$TUNNEL_URL/mcp`와 `Authorization: Bearer` 헤더/토큰을 등록합니다. ⚠️ 이 경로는 CLI 두 개와 달리 **직접 라이브로 검증하지 않았습니다** — claude.ai UI가 정적 토큰 대신 OAuth 플로우를 강제할 수 있고, 그렇다면 이 프로젝트가 지원하는 정적 토큰 인증만으로는 부족해 별도 작업이 필요합니다. 실제로 등록해보고 안 되면 알려주세요.
+**ChatGPT 웹**: 현재 프로젝트의 정적 Bearer 토큰은 ChatGPT가 인증된 MCP 서버에 요구하는 OAuth 2.1 discovery를 구현하지 않으므로 그대로 등록할 수 없습니다. 공개 Quick Tunnel에서 인증을 끄는 방식도 비용·데이터 노출 위험 때문에 지원하지 않습니다. 정확한 제약, UI 등록 흐름, OAuth로 확장하는 방법은 [전용 가이드](./chatgpt-cloudflare-quick-tunnel.md)를 참고하세요.
+
+**claude.ai 웹 (커스텀 커넥터)**: CLI 두 개와 달리 직접 라이브로 검증하지 않았습니다. UI가 정적 토큰 대신 OAuth 플로우를 강제하면 현재 인증 방식만으로는 부족합니다.
 
 ### 7.4 주의사항
 
