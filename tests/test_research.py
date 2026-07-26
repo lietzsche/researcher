@@ -84,53 +84,52 @@ def test_config_defaults_output_language_to_korean(
     assert settings.output_language == "Korean"
 
 
-def test_config_defaults_to_no_fallback_retriever(
+def test_config_defaults_to_searxng_retriever(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.delenv("FALLBACK_RETRIEVER", raising=False)
-    monkeypatch.delenv("FALLBACK_RETRIEVER_API_KEY", raising=False)
+    monkeypatch.delenv("RETRIEVER", raising=False)
 
     settings = load_settings(
         require_api_key=False,
         env_file=tmp_path / "missing.env",
     )
 
-    assert settings.fallback_retriever is None
-    assert settings.fallback_retriever_api_key is None
+    assert settings.retriever == "searxng"
+    assert settings.retriever_api_key is None
 
 
-def test_config_rejects_unsupported_fallback_retriever() -> None:
-    with pytest.raises(ValueError, match="tavily, serper, serpapi"):
+def test_config_rejects_unsupported_retriever() -> None:
+    with pytest.raises(ValueError, match="searxng, tavily, serper, serpapi"):
         Settings(
             require_api_key=False,
-            fallback_retriever="unsupported",
-            fallback_retriever_api_key="test-key",
+            retriever="unsupported",
+            retriever_api_key="test-key",
         )
 
 
-def test_config_requires_fallback_retriever_api_key() -> None:
-    with pytest.raises(ValueError, match="FALLBACK_RETRIEVER_API_KEY"):
+def test_config_requires_paid_retriever_api_key() -> None:
+    with pytest.raises(ValueError, match="TAVILY_API_KEY"):
         Settings(
             require_api_key=False,
-            fallback_retriever="tavily",
+            retriever="tavily",
         )
 
 
-def test_config_accepts_supported_fallback_retriever(
+def test_config_accepts_supported_paid_retriever(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("FALLBACK_RETRIEVER", "tavily")
-    monkeypatch.setenv("FALLBACK_RETRIEVER_API_KEY", "test-tavily-key")
+    monkeypatch.setenv("RETRIEVER", "tavily")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-tavily-key")
 
     settings = load_settings(
         require_api_key=False,
         env_file=tmp_path / "missing.env",
     )
 
-    assert settings.fallback_retriever == "tavily"
-    assert settings.fallback_retriever_api_key == "test-tavily-key"
+    assert settings.retriever == "tavily"
+    assert settings.retriever_api_key == "test-tavily-key"
 
 
 def test_config_loads_output_language_from_environment(
@@ -596,7 +595,7 @@ async def test_research_section_marks_error_when_no_sources_are_found(
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_research_section_without_fallback_propagates_searx_error(
+async def test_research_section_propagates_searx_error(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -612,7 +611,7 @@ async def test_research_section_without_fallback_propagates_searx_error(
         def get_research_sources(self) -> list[dict[str, str]]:
             return []
 
-    topic = "No Fallback Exception"
+    topic = "SearXNG Exception"
     storage = _initialize_research_section(tmp_path, topic)
     respx.get("http://searx.test/search").mock(
         return_value=httpx.Response(
@@ -639,17 +638,65 @@ async def test_research_section_without_fallback_propagates_searx_error(
     assert "봇 차단 가능성 높음 (1/1개 엔진)" in caplog.text
 
 
-@respx.mock
 @pytest.mark.asyncio
-async def test_research_section_falls_back_after_searx_error(
+async def test_research_section_restores_environment_after_paid_retriever(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    retriever_calls: list[str] = []
+    class SuccessfulResearcher:
+        async def conduct_research(self) -> None:
+            return None
 
+        async def write_report(self, **_kwargs: object) -> str:
+            return "Paid retriever content"
+
+        def get_research_sources(self) -> list[dict[str, str]]:
+            return [{"title": "Source", "url": "https://example.com/paid"}]
+
+    def factory(**_kwargs: object) -> SuccessfulResearcher:
+        assert os.environ["RETRIEVER"] == "tavily"
+        assert os.environ["TAVILY_API_KEY"] == "test-tavily-key"
+        return SuccessfulResearcher()
+
+    monkeypatch.delenv("RETRIEVER", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    before = load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    )
+    topic = "Paid Retriever"
+    _initialize_research_section(tmp_path, topic)
+    settings = Settings(
+        require_api_key=False,
+        retriever="tavily",
+        retriever_api_key="test-tavily-key",
+    )
+
+    await research_section(
+        topic,
+        "01",
+        output_root=tmp_path,
+        settings=settings,
+        researcher_factory=factory,
+    )
+    after = load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    )
+
+    assert os.environ.get("RETRIEVER") is None
+    assert os.environ.get("TAVILY_API_KEY") is None
+    assert after.retriever == before.retriever == "searxng"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_paid_retriever_failure_does_not_diagnose_searxng(
+    tmp_path: Path,
+) -> None:
     class FailingResearcher:
         async def conduct_research(self) -> None:
-            raise RuntimeError("SearXNG unavailable")
+            raise RuntimeError("Tavily unavailable")
 
         async def write_report(self, **_kwargs: object) -> str:
             pytest.fail("report must not be written after research fails")
@@ -657,85 +704,50 @@ async def test_research_section_falls_back_after_searx_error(
         def get_research_sources(self) -> list[dict[str, str]]:
             return []
 
-    class SuccessfulResearcher:
-        async def conduct_research(self) -> None:
-            return None
-
-        async def write_report(self, **_kwargs: object) -> str:
-            return "Fallback content"
-
-        def get_research_sources(self) -> list[dict[str, str]]:
-            return [{"title": "Source", "url": "https://example.com/fallback"}]
-
-    def factory(**_kwargs: object) -> object:
-        retriever = os.environ["RETRIEVER"]
-        retriever_calls.append(retriever)
-        if retriever == "searx":
-            return FailingResearcher()
-        assert retriever == "tavily"
-        assert os.environ["TAVILY_API_KEY"] == "test-tavily-key"
-        return SuccessfulResearcher()
-
-    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    topic = "Fallback Success"
+    topic = "Paid Retriever Failure"
     storage = _initialize_research_section(tmp_path, topic)
     settings = Settings(
         require_api_key=False,
         searxng_url="http://searx.test",
-        fallback_retriever="tavily",
-        fallback_retriever_api_key="test-tavily-key",
+        retriever="tavily",
+        retriever_api_key="test-tavily-key",
     )
-    respx.get("http://searx.test/search").mock(
+    diagnosis_route = respx.get("http://searx.test/search").mock(
         return_value=httpx.Response(200, json={"unresponsive_engines": []})
     )
 
-    result = await research_section(
-        topic,
-        "01",
-        output_root=tmp_path,
-        settings=settings,
-        researcher_factory=factory,
-    )
+    with pytest.raises(RuntimeError, match="Tavily unavailable"):
+        await research_section(
+            topic,
+            "01",
+            output_root=tmp_path,
+            settings=settings,
+            researcher_factory=lambda **_kwargs: FailingResearcher(),
+        )
 
+    assert diagnosis_route.called is False
     section = storage.load_manifest()["sections"][0]
-    assert retriever_calls == ["searx", "tavily"]
-    assert result["sources"] == [
-        {"title": "Source", "url": "https://example.com/fallback"}
-    ]
-    assert section["status"] == "done"
-    assert section["source_count"] == 1
+    assert section["status"] == "error"
 
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_research_section_marks_error_when_both_retrievers_are_empty(
+async def test_empty_paid_retriever_result_does_not_diagnose_searxng(
     tmp_path: Path,
 ) -> None:
-    retriever_calls: list[str] = []
-
     class EmptyResearcher:
         async def conduct_research(self) -> None:
             return None
 
         async def write_report(self, **_kwargs: object) -> str:
-            return "Ungrounded content"
+            return "Ungrounded paid retriever content"
 
         def get_research_sources(self) -> list[dict[str, str]]:
             return []
 
-    def factory(**_kwargs: object) -> EmptyResearcher:
-        retriever_calls.append(os.environ["RETRIEVER"])
-        return EmptyResearcher()
-
-    topic = "Both Retrievers Empty"
+    topic = "Empty Paid Retriever"
     storage = _initialize_research_section(tmp_path, topic)
-    settings = Settings(
-        require_api_key=False,
-        searxng_url="http://searx.test",
-        fallback_retriever="tavily",
-        fallback_retriever_api_key="test-tavily-key",
-    )
-    respx.get("http://searx.test/search").mock(
+    diagnosis_route = respx.get("http://searx.test/search").mock(
         return_value=httpx.Response(200, json={"unresponsive_engines": []})
     )
 
@@ -743,56 +755,18 @@ async def test_research_section_marks_error_when_both_retrievers_are_empty(
         topic,
         "01",
         output_root=tmp_path,
-        settings=settings,
-        researcher_factory=factory,
+        settings=Settings(
+            require_api_key=False,
+            searxng_url="http://searx.test",
+            retriever="tavily",
+            retriever_api_key="test-tavily-key",
+        ),
+        researcher_factory=lambda **_kwargs: EmptyResearcher(),
     )
 
-    section = storage.load_manifest()["sections"][0]
-    assert retriever_calls == ["searx", "tavily"]
+    assert diagnosis_route.called is False
     assert result["sources"] == []
-    assert section["status"] == "error"
-    assert section["source_count"] == 0
-
-
-@pytest.mark.asyncio
-async def test_research_section_skips_paid_fallback_after_searx_success(
-    tmp_path: Path,
-) -> None:
-    retriever_calls: list[str] = []
-
-    class SuccessfulResearcher:
-        async def conduct_research(self) -> None:
-            return None
-
-        async def write_report(self, **_kwargs: object) -> str:
-            return "SearXNG content"
-
-        def get_research_sources(self) -> list[dict[str, str]]:
-            return [{"title": "Source", "url": "https://example.com/searx"}]
-
-    def factory(**_kwargs: object) -> SuccessfulResearcher:
-        retriever_calls.append(os.environ["RETRIEVER"])
-        return SuccessfulResearcher()
-
-    topic = "No Unnecessary Fallback"
-    storage = _initialize_research_section(tmp_path, topic)
-    settings = Settings(
-        require_api_key=False,
-        fallback_retriever="tavily",
-        fallback_retriever_api_key="test-tavily-key",
-    )
-
-    result = await research_section(
-        topic,
-        "01",
-        output_root=tmp_path,
-        settings=settings,
-        researcher_factory=factory,
-    )
-
-    assert retriever_calls == ["searx"]
-    assert result["sources"]
-    assert storage.load_manifest()["sections"][0]["status"] == "done"
+    assert storage.load_manifest()["sections"][0]["status"] == "error"
 
 
 @pytest.mark.asyncio
