@@ -2,7 +2,8 @@
 .env.*
 !.env.example
 .claude/settings.local.json
-.codex/
+.codex/*
+!.codex/config.toml
 .venv/
 __pycache__/
 *.py[cod]

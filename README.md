@@ -51,15 +51,23 @@ Windows에서는 command를 `.venv\Scripts\python.exe` 절대 경로로 바꿉�
 Windows Claude Code에서 WSL의 서버를 실행할 때는 `wsl.exe -e` 뒤에 WSL
 Python과 `server.py`의 절대 경로를 전달할 수 있습니다.
 
-Codex CLI의 `~/.codex/config.toml`에는 실제 저장소 절대 경로로 바꾼 다음
-아래 스니펫을 추가합니다. 저장소 구현은 사용자 전역 config를 수정하지
-않습니다.
+Codex CLI용 프로젝트 설정은 저장소의 [`.codex/config.toml`](./.codex/config.toml)에
+포함되어 있습니다. WSL/Linux에서는 Git 저장소 루트를 실행 시점에 찾아
+사용하므로 clone 위치가 달라도 설정을 수정할 필요가 없습니다. 프로젝트마다
+`.venv`를 만든 뒤 저장소 안에서 `codex`를 실행합니다.
 
 ```toml
 [mcp_servers.deep-research]
-command = "/absolute/path/to/researcher/.venv/bin/python"
-args = ["/absolute/path/to/researcher/mcp_server/server.py"]
+command = "bash"
+args = [
+  "-lc",
+  'root="$(git rev-parse --show-toplevel)" && exec "$root/.venv/bin/python" "$root/mcp_server/server.py"',
+]
 ```
+
+Windows 네이티브 Codex CLI에서는 `.venv\Scripts\python.exe`를 사용하는
+별도의 사용자 설정이 필요합니다. 이 저장소의 기본 Codex 설정은 WSL/Linux
+환경을 대상으로 합니다.
 
 서버를 직접 실행할 수도 있습니다.
 
