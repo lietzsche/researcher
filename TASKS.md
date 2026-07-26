@@ -247,9 +247,9 @@
 - [x] 테스트: 로그 핸들러가 로그를 쌓는지, `/api/logs?after_id=`가 커서 이후 것만 반환하는지, `maxlen` 초과 시 오래된 것부터 버려지는지.
 
 ### 17.3 섹션 상세 → 바로 다음/이전 섹션 (DESIGN.md §20.3)
-- [ ] `app/static/app.js`의 `renderSectionDocument(slug, sectionId)` 수정: 섹션 본문 fetch와 별도로 `GET /api/topics/{slug}`를 호출해 `toc` 순서 + `manifest.sections` 상태를 얻는다. 현재 섹션 인덱스를 찾아 이전/다음 section id 계산, 이웃 섹션이 `status === "done"`일 때만 링크 활성화.
-- [ ] 페이지에 "← 이전 섹션 / 다음 섹션 →" 버튼 추가(기존 "← 돌아가기"는 유지).
-- [ ] 백엔드 변경 없음 — 새 API 만들지 말 것 (기존 두 엔드포인트로 충분).
+- [x] `app/static/app.js`의 `renderSectionDocument(slug, sectionId)` 수정: 섹션 본문 fetch와 별도로 `GET /api/topics/{slug}`를 호출해 `toc` 순서 + `manifest.sections` 상태를 얻는다. 현재 섹션 인덱스를 찾아 이전/다음 section id 계산, 이웃 섹션이 `status === "done"`일 때만 링크 활성화.
+- [x] 페이지에 "← 이전 섹션 / 다음 섹션 →" 버튼 추가(기존 "← 돌아가기"는 유지).
+- [x] 백엔드 변경 없음 — 새 API 만들지 말 것 (기존 두 엔드포인트로 충분).
 
 ### 17.4 다운로드 엑셀 옵션 (DESIGN.md §20.4)
 - [ ] `pyproject.toml`에 `openpyxl` 의존성 추가.

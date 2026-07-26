@@ -110,6 +110,23 @@ function progressText(completed, total) {
   return total ? `${completed}/${total}` : "0/0";
 }
 
+function sectionNeighbors(toc, manifestSections, sectionId) {
+  const index = toc.findIndex((section) => section.id === sectionId);
+  const statusById = new Map(
+    manifestSections.map((section) => [section.id, section.status]),
+  );
+  const neighbor = (offset) => {
+    const section = toc[index + offset];
+    if (index < 0 || !section) return null;
+    return {
+      id: section.id,
+      title: section.title,
+      available: statusById.get(section.id) === "done",
+    };
+  };
+  return { previous: neighbor(-1), next: neighbor(1) };
+}
+
 async function renderHome() {
   setLoading("저장된 주제를 불러오는 중…");
   const topics = await api("/api/topics");
@@ -462,15 +479,33 @@ async function renderDocument(slug) {
 
 async function renderSectionDocument(slug, sectionId) {
   setLoading("섹션 문서를 불러오는 중…");
-  const resp = await fetch(
-    `/api/topics/${encodeSlug(slug)}/sections/${encodeURIComponent(sectionId)}`,
-    { credentials: "same-origin" },
-  );
+  const [resp, detail] = await Promise.all([
+    fetch(
+      `/api/topics/${encodeSlug(slug)}/sections/${encodeURIComponent(sectionId)}`,
+      { credentials: "same-origin" },
+    ),
+    api(`/api/topics/${encodeSlug(slug)}`),
+  ]);
   if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
   const text = await resp.text();
+  const neighbors = sectionNeighbors(detail.toc, detail.manifest.sections, sectionId);
+  const neighborButton = (neighbor, label) => {
+    if (!neighbor) return '<span class="section-nav-spacer"></span>';
+    if (!neighbor.available) {
+      return `<span class="button button-ghost button-disabled" aria-disabled="true"
+        title="${escapeHtml(neighbor.title)}">${escapeHtml(label)}</span>`;
+    }
+    return `<a class="button button-ghost"
+      href="#/topic/${encodeSlug(slug)}/section/${encodeURIComponent(neighbor.id)}"
+      title="${escapeHtml(neighbor.title)}">${escapeHtml(label)}</a>`;
+  };
   appRoot.innerHTML = `
     <section class="narrow">
       <a class="back-link" href="#/topic/${encodeSlug(slug)}/progress">← 돌아가기</a>
+      <nav class="section-nav" aria-label="섹션 이동">
+        ${neighborButton(neighbors.previous, "← 이전 섹션")}
+        ${neighborButton(neighbors.next, "다음 섹션 →")}
+      </nav>
       <article class="panel prose">${marked.parse(text)}</article>
     </section>`;
   enableInPageAnchors(appRoot.querySelector(".prose"));
