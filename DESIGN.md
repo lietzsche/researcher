@@ -571,6 +571,87 @@ codex가 헷갈리지 않도록 명시적으로 나열한다.
 - `tests/test_research.py`: 컨텍스트 없이 거절 응답을 반환하는 가짜 리서처로 `research_section()`을 호출해 `status="error"`/`source_count=0`이 기록되는지, 그리고 같은 섹션을 다시 호출했을 때 캐시를 타지 않고 실제로 재시도되어 성공하면 `status="done"`으로 바뀌는지 확인.
 - `tests/test_api.py`: 빌드 안에서 한 섹션이 출처 없이 끝나면(`error`) 나머지가 성공해도 조립이 스킵되는지 확인 (§20.5의 기존 "실패 시 조립 스킵" 로직이 이 새 상태 값에도 그대로 작동하는지 회귀 검증).
 
+## 23. 실사용 중 요청된 6건 (Phase 20 구현 대상)
+
+사용자가 실제로 써보면서 요청한 여섯 가지. 이 중 **2, 3, 4번은 서로 깊게 얽혀 있다** — 목차 생성을 비동기로 만들려면(2번) "아직 목차가 없는" 새로운 토픽 상태를 도입해야 하고, 그 상태 역시 서버가 재시작되면 4번과 똑같이 "멈춘 채 삭제도 안 되는" 문제를 겪을 수 있으므로 같이 설계한다.
+
+### 23.1 목차별로 파일 분리해서 다운로드 (섹션별 ZIP)
+
+- 지금은 다운로드가 마크다운 하나 또는 엑셀 워크북 하나뿐이다 (`GET /api/topics/{slug}/download?format=markdown|excel`). 섹션별로 분리된 개별 파일을 원하는 요청.
+- `app/export.py`에 `build_section_zip(topic: str, storage: OutputStorage) -> BytesIO` 추가. 파이썬 표준 라이브러리 `zipfile`만 쓰면 되고 새 의존성은 필요 없다.
+  - `toc.md`를 `00-목차.md`로 압축 파일 맨 앞에 포함.
+  - TOC 순서대로 각 섹션을 순회하되, `manifest.json`에서 그 섹션의 `status`가 `"done"`인 것만 포함한다 (미완료 섹션은 실제 내용이 없으므로 건너뛴다 — `assemble_study_document()`의 "미완료 표시" 방식과 다르게, 여기서는 아예 파일을 안 넣는 게 "분리된 개별 파일 묶음"이라는 취지에 더 맞다).
+  - 각 섹션 파일명은 `manifest_section["path"]`의 basename을 그대로 쓴다(§19의 path 기반 조회 원칙 유지 — title 재계산 금지).
+  - 참고: 파이썬 `zipfile`은 비-ASCII(한글) 압축 내 파일명에 자동으로 UTF-8 플래그(bit 11)를 설정해주므로 압축 파일 내부 한글 파일명은 별도 처리 없이 정상 동작한다 (직접 확인함).
+- `app/main.py`의 `download_document()`에 `format` 값으로 `"zip"` 추가 (`Literal["markdown", "excel", "zip"]`). `format=zip`이면 `build_section_zip()` 결과를 `media_type="application/zip"`으로 스트리밍. **다운로드 파일명 인코딩은 §23.6의 수정을 반드시 함께 적용할 것** (그냥 f-string으로 헤더를 만들면 한글 slug에서 크래시난다 — 그게 6번 문제다).
+- 기존 두 포맷과 동일하게 `study_document.md`가 있어야 다운로드 가능한 조건은 그대로 유지 (일관성을 위해 — 완전히 새로운 "부분 완료만으로도 다운로드" 조건은 이번 범위 밖).
+- 프론트엔드: 다운로드 링크가 있는 세 곳(홈 카드, 진행 화면, 문서 화면) 모두에 "다운로드 (섹션별 ZIP)" 링크를 `?format=zip`으로 추가.
+- 테스트: 여러 섹션(일부 미완료 포함)이 있는 토픽에서 zip을 만들어 `zipfile.ZipFile`로 다시 열어 `00-목차.md` + done 섹션 파일들만 있고 미완료 섹션은 없는지 확인.
+
+### 23.2~23.4 목차 생성 비동기화, 전체 리서치 시작 비동기 이탈, 서버 재시작 후 복구 불가 (셋을 함께 설계)
+
+**현재 문제**:
+- `POST /api/topics`(`app/main.py`)가 `generate_toc()`(`app/toc.py`)를 **직접 await로 동기 호출**한다. LLM 한 번 호출이 끝날 때까지 HTTP 응답 자체가 안 오므로, 프론트엔드의 "새 주제 만들기" 제출 버튼이 그동안 "목차를 설계하는 중…" 상태로 그 화면에 묶여 있다.
+- `POST /api/topics/{slug}/build`는 이미 작업 큐에 등록만 하고 202로 즉시 응답한다(§8) — 백엔드는 이미 비동기다. 프론트엔드(`app/static/app.js`의 `#build-all` 클릭 핸들러)가 이 응답을 `await`한 **뒤에** 페이지를 이동하는데, 정상적인 상황에선 이 응답이 아주 빠르지만, §20.1에서 다룬 것처럼 서버가 바쁠 때(임베딩 CPU 점유 등) 이 한 번의 요청조차 지연될 수 있고, 그동안 사용자는 비활성화된 버튼만 보며 그 화면에 묶여 있다.
+- `manifest.json`의 섹션 상태가 `in_progress`인 채로 서버가 죽었다 다시 뜨면, 그 섹션은 영원히 `in_progress`로 남는다. 프론트엔드의 버튼 비활성화 조건(`tocSection()`/`statusRow()`)과 `POST .../research`(409)/`DELETE`(409) 둘 다 **`status === "in_progress"`를 근거로 막기 때문에**, 이 토픽은 재시도도, 삭제도 안 되는 상태로 영원히 남는다 (직접 코드로 확인함 — `app/main.py`의 `delete_topic()`과 `start_section_research()`, `app/static/app.js`의 `tocSection()`/`statusRow()` 전부 `in_progress`면 막도록만 되어 있고, "이게 정말 지금 프로세스가 처리 중인 게 맞는지"는 확인하지 않는다).
+
+**통합 설계**:
+
+1. **목차 생성도 백그라운드 작업 큐로 옮긴다** (`app/jobs.py`).
+   - `ResearchJob`에 `kind: Literal["section", "build", "toc"]`을 추가하고, `section_ids: tuple[str, ...] = ()`, `depth: str = "standard"`, `num_sections: int | None = None` 필드에 기본값을 줘서 기존 두 종류의 job과 호환되게 한다.
+   - `SerialJobQueue.enqueue_toc_generation(topic, *, depth, num_sections)` 추가 — `ResearchJob(kind="toc", topic=topic, depth=depth, num_sections=num_sections)`을 큐에 넣는다.
+   - `_run()`의 분기에 `"toc"` 케이스 추가 → 새 메서드 `_generate_toc(job)`가 `app.toc.generate_toc(job.topic, depth=job.depth, num_sections=job.num_sections, output_root=self.settings.research_output_dir)`를 호출. `research_section`과 동일한 패턴으로 `asyncio.wait_for(..., timeout=self.settings.toc_timeout_seconds)`로 감싸고(§20.1과 같은 이유 — LLM 호출이 영원히 안 끝나는 경우에 대한 방어), 실패하면 `storage.mark_toc_error(str(exc))`(아래 3번)를 기록하고 재raise.
+   - `app/config.py`에 `toc_timeout_seconds: float = 180`(env `TOC_TIMEOUT_SECONDS`, 1~1200 검증) 추가.
+
+2. **"아직 목차가 없는" 토픽을 위한 매니페스트 상태 도입** (`app/storage.py`).
+   - `manifest.json`에 최상위 필드 `toc_status: "generating" | "done" | "error"` 추가. 필드가 없는 기존(레거시) manifest는 `"done"`으로 취급한다(이미 `sections`가 채워져 있으므로).
+   - `OutputStorage.initialize_pending_manifest(self, *, depth: str) -> dict`: `sections: []`, `toc_status: "generating"`인 최소 manifest를 만들어 저장 — `POST /api/topics`가 LLM을 부르기 **전에** 동기적으로(빠르게) 호출한다.
+   - `OutputStorage.initialize_manifest(...)`에 `created_at: str | None = None` 파라미터 추가 — 넘기면 그 값을 그대로 쓰고, 없으면 지금처럼 `utc_now()`. 목차 생성이 실제로 끝나 이 함수가 다시 호출될 때, 최초 제출 시각(펜딩 manifest의 `created_at`)을 그대로 넘겨서 홈 화면 정렬 기준이 "실제로 언제 만들기 시작했는지"를 유지하게 한다. 이 함수는 이제 `toc_status: "done"`도 명시적으로 기록한다.
+   - `OutputStorage.mark_toc_error(self, message: str) -> dict`: 기존 매니페스트를 읽어 `toc_status="error"`, `toc_error=message`, `updated_at` 갱신 후 저장.
+
+3. **`POST /api/topics`를 빠르게 응답하도록 재작성** (`app/main.py`).
+   - 흐름: 중복 체크(기존과 동일) → `candidate.initialize_pending_manifest(depth=payload.depth)` → `await _queue(request).enqueue_toc_generation(payload.topic, depth=payload.depth, num_sections=payload.num_sections)` → 즉시 `{"slug": candidate.topic_slug, "status": "queued"}` 반환.
+   - 상태 코드를 `201`에서 `202`로 변경 (더 이상 완성된 리소스를 동기로 만드는 게 아니므로).
+   - `JobQueue` 프로토콜에 `enqueue_toc_generation` 메서드 시그니처 추가.
+
+4. **조회 API가 "생성 중"/"실패" 상태를 다룰 수 있게** (`app/main.py`).
+   - `_topic_detail()`: manifest를 먼저 읽고, `toc_status != "done"`이면 `toc.json`을 읽으려 시도하지 않고 `{"toc": [], "manifest": manifest}`를 바로 반환(지금은 `toc.json`이 없으면 무조건 404였음 — 생성 중에는 당연히 없으므로 이 분기가 없으면 계속 404가 난다).
+   - `_topic_summary()`: 반환 딕셔너리에 `"toc_status": manifest.get("toc_status", "done")` 추가 — 홈 화면 카드가 이 값으로 상태를 구분한다.
+
+5. **서버 재시작 시 멈춰있는 상태를 자동으로 되돌린다** (`app/storage.py`의 새 모듈 함수 `reconcile_stale_jobs(output_root)`, `app/main.py`의 `lifespan`에서 앱 시작 시 1회 호출).
+   - 이 함수가 호출되는 시점엔 작업 큐가 이제 막 비어있는 상태로 새로 만들어졌다 — 즉 **이 시점에 `in_progress`/`toc_status: "generating"`으로 남아있는 건 전부 이전 프로세스가 죽으면서 남긴 찌꺼기임이 논리적으로 확실하다** (지금 막 시작한 큐가 뭔가를 진짜로 처리 중일 수는 없으므로).
+   - `research_output_dir` 아래 모든 토픽 디렉터리를 순회하며: `toc_status == "generating"`이면 `"error"` + `toc_error="서버 재시작으로 목차 생성이 중단됨"`으로, 섹션 `status == "in_progress"`면 `"pending"`으로 되돌리고 변경된 매니페스트만 저장한다. 읽기 실패한 개별 매니페스트는 건너뛰고 경고만 남긴다(전체 시작을 막지 않음).
+   - 이 리컨실리에이션 덕분에, 이후 살아있는 프로세스에서 관찰되는 `in_progress`/`generating`은 **항상 진짜로 지금 실행 중인 작업**이라고 신뢰할 수 있게 된다 — 그래서 기존 409 차단 로직(`start_section_research`, `start_build`, `delete_topic`) 자체는 안 바꿔도 된다. 단 `delete_topic()`에는 `manifest.get("toc_status") == "generating"`일 때도 막는 조건을 추가한다(지금은 `sections` 배열만 보므로, 아직 섹션이 없는 "목차 생성 중" 토픽은 원래도 삭제가 막히지 않았는데, 이 상태 자체가 진짜 실행 중임을 위 리컨실리에이션이 보장하는 시점부터는 막아주는 게 맞다).
+
+6. **프론트엔드**:
+   - `app/static/app.js`의 `renderNewTopic()`: 응답이 이제 `{slug, status}`이므로 `result.slug`로 이동 (`result.manifest.topic_slug`가 아니라). 응답 자체가 이제 빨라졌으므로(LLM 호출 없이 매니페스트만 만들고 큐에 넣는 것) 기존처럼 `await` 후 이동해도 충분하다 — 별도의 낙관적 네비게이션은 필요 없다.
+   - `renderToc()`: `manifest.toc_status`가 `"generating"`이면 목차 목록 대신 "목차를 생성하는 중입니다…" 패널을 보여주고 진행 화면과 같은 패턴으로 3초 폴링; `"error"`면 `manifest.toc_error`를 보여주고 "주제 삭제" 버튼만 노출; `"done"`(또는 필드 없음, 레거시)이면 지금처럼 렌더링.
+   - `topicCard()`(홈 화면): `toc_status`에 따라 진행률 바 대신 배지 표시 — `"generating"`은 기존 `.status-badge.in_progress` 스타일 재사용, `"error"`는 `.status-badge.error` 재사용(새 CSS 불필요). "열기" 링크는 `toc_status !== "done"`이면 `#/topic/{slug}/toc`로(생성 중/실패 화면을 보여주기 위해), `"done"`이면 지금처럼 `#/topic/{slug}/progress`로.
+   - `#build-all` 클릭 핸들러(`renderToc()` 안): 지금은 `await api(...)` 후 페이지 이동이라 응답이 늦어지면 그 화면에 묶인다 — `await` 없이 fetch를 시작만 하고 **즉시** `#/topic/{slug}/progress`로 이동, 실패는 `.catch()`로 토스트만 띄운다(사용자는 이미 다음 화면에 가 있음 — 그 화면 자체의 폴링이 "아무것도 시작 안 됐다"는 사실을 자연히 보여준다). 개별 "이 섹션만 리서치" 버튼은 이번 범위에서 건드리지 않는다(사용자가 지목한 건 "전체 리서치 시작"뿐).
+
+**남는 한계**: `toc_status: "error"`가 된 토픽은 재생성 버튼 없이 삭제만 가능하다 — 아직 섹션 리서치를 하나도 안 한 시점이라 삭제 후 "새 주제 만들기"로 다시 만드는 것과 비용이 같으므로, 이번 범위에서는 별도의 "다시 생성" 엔드포인트/버튼을 만들지 않는다.
+
+### 23.5 섹션 상세 화면 아래쪽에도 이전/다음 섹션 버튼
+
+- `app/static/app.js`의 `renderSectionDocument()`: 지금은 `<nav class="section-nav">`가 본문(`.prose`) **위**에만 있다. 같은 네비게이션 블록을 본문 **아래**에도 동일하게 렌더링한다 (긴 섹션을 다 읽은 뒤 위로 스크롤하지 않고 바로 다음/이전으로 이동할 수 있게). `neighborButton()` 호출 결과를 변수에 담아 위/아래 두 곳에서 재사용.
+
+### 23.6 엑셀 다운로드 오류 — 두 가지 실제 버그를 코드로 확인함
+
+**버그 A (거의 항상 재현됨): 한글 파일명이 HTTP 헤더 인코딩을 깨뜨림.**
+`app/main.py`의 `download_document()`가 엑셀 응답의 `Content-Disposition` 헤더를 `f'attachment; filename="{slug}.xlsx"'`로 직접 문자열 조립하는데, `slug`는 한글을 보존하도록 설계된 slugify(§2 참고, 한글 주제 지원을 위해 의도적으로 그렇게 만들었음) 결과라 한글 문자를 포함한다. HTTP 헤더 값은 Latin-1로 인코딩되어야 하는데, 직접 실험으로 확인한 결과 **한글이 포함된 헤더를 이렇게 그대로 보내면 `UnicodeEncodeError`로 그 자리에서 크래시난다.** 반면 마크다운 다운로드는 `FileResponse(..., filename=...)`를 쓰는데, Starlette의 `FileResponse`는 파일명이 ASCII가 아니면 자동으로 `filename*=utf-8''<percent-encoded>` 형식(RFC 5987)으로 안전하게 인코딩해준다(Starlette 소스로 직접 확인) — 마크다운 다운로드가 멀쩡했던 이유이자, 엑셀만 깨지는 이유다.
+- **수정**: `urllib.parse.quote()`로 파일명을 퍼센트 인코딩한 뒤 `filename*=utf-8''<encoded>` 형식으로 직접 헤더를 구성한다 (Starlette의 `FileResponse`가 내부적으로 하는 것과 동일한 방식). `StreamingResponse`는 `FileResponse`처럼 `filename=` 파라미터를 지원하지 않으므로 헤더를 직접 만들어야 한다. §23.1의 새 zip 다운로드에도 동일하게 적용.
+
+**버그 B (섹션 본문에 따라 재현됨): XML에 쓸 수 없는 제어 문자가 섞이면 엑셀 저장 자체가 크래시난다.**
+스크래핑된 웹 콘텐츠에는 가끔 XML 1.0에서 허용하지 않는 제어 문자(널 바이트, 폼피드 등)가 섞여 들어올 수 있다. `openpyxl`은 이런 문자가 셀 값에 있으면 **경고 없이 그 자리에서 `IllegalCharacterError`를 던진다** — 직접 재현해 확인함(수직 탭 문자 하나만 넣어도 저장 시 크래시). §21에서 다룬 셀당 32,767자 제한과는 별개의, 더 근본적인 크래시 버그다.
+- **수정**: `app/export.py`에 `openpyxl.cell.cell.ILLEGAL_CHARACTERS_RE`(openpyxl이 이미 제공하는, 바로 이 문제를 위한 정규식)로 문자열을 정리하는 헬퍼를 추가하고, 워크북에 쓰는 모든 문자열 값(목차 제목/설명, 본문, 출처 제목/URL, 워크북 제목)에 적용한다. 순서: 제어 문자 제거 → (본문은) §21의 길이 제한 자르기.
+
+### 23.7 테스트 (§23.2~23.4)
+- `app/config.py`: `toc_timeout_seconds` 기본값/검증 테스트.
+- `app/storage.py`: `initialize_pending_manifest`/`mark_toc_error`/`initialize_manifest`의 `created_at` 보존 단위 테스트. `reconcile_stale_jobs`가 `in_progress`→`pending`, `toc_status: generating`→`error`로 정확히 되돌리는지, 이미 정상 상태인 매니페스트는 안 건드리는지(불필요한 쓰기 없음) 테스트.
+- `app/jobs.py`: `enqueue_toc_generation` → `_generate_toc`가 실제로 `generate_toc()`를 호출하고 실패 시 `mark_toc_error`를 기록하는지, 타임아웃 시에도 마찬가지인지 (fake `generate_toc` 사용).
+- `app/main.py`: `POST /api/topics`가 202로 빠르게 응답하고 pending manifest를 만드는지, `GET /api/topics/{slug}`가 `toc_status: "generating"`일 때 404 대신 빈 toc를 반환하는지, `DELETE`가 `toc_status: "generating"`일 때 409로 막히는지, 서버 재시작을 흉내낸 뒤(수동으로 `in_progress`/`generating` 상태를 만들어두고 `create_app()`을 다시 호출) 그 상태가 리컨실리에이션으로 풀리는지.
+- `tests/test_export.py`: 헤더 인코딩 수정 후 실제로 한글 slug로 엑셀 다운로드가 200을 반환하는지(API 레벨), 제어 문자가 섞인 섹션 본문으로 엑셀을 만들어도 크래시 없이 저장/재로드되는지.
+
 ---
 
 ## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
@@ -582,4 +663,5 @@ codex가 헷갈리지 않도록 명시적으로 나열한다.
 - Phase 16(§19) 완료 후: 코드 리뷰, manifest의 title을 실제 파일명과 일부러 다르게 설정한 상황을 재현해 `research_section`/`get_section_document`/`assemble_study_document`가 여전히 파일을 찾는지 검증.
 - Phase 17(§20) 완료 후: 코드 리뷰. 특히 (1) SearXNG 타임아웃 몽키패치가 idempotent하게 한 번만 적용되는지, (2) 병렬 빌드에서 매니페스트 갱신이 실제로 안전한지(§20.5 가정 재검증), (3) 엑셀 다운로드 파일이 실제로 열리는지, (4) 로그 페이지가 실제 로그를 보여주는지 실사용 검증.
 - Phase 18(§21) 완료 후: 코드 리뷰, `MAX_CONCURRENT_RESEARCH` 기본값이 실제로 1로 바뀌었는지, `source_count == 0` 경고 로그가 실제로 남는지 확인. 가능하면 사용자가 같은 유형의 주제로 재테스트해서 검색 실패가 줄었는지 결과 공유받기.
+- Phase 20(§23) 완료 후: 코드 리뷰. 특히 (1) 목차 생성이 정말 빠르게 응답하고 백그라운드에서 완성되는지, (2) 서버 재시작을 흉내낸 뒤 `in_progress`/`generating` 상태가 실제로 풀리고 삭제·재시도가 가능해지는지, (3) 엑셀/zip 다운로드가 한글 slug로 실제로 크래시 없이 되는지, (4) 제어 문자가 섞인 본문으로도 엑셀이 만들어지는지 직접 재현해서 확인.
 - (향후, 별도 설계) 오디오 오버뷰 파이프라인.

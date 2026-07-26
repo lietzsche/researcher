@@ -299,6 +299,57 @@
 
 ---
 
+## Phase 20 — 실사용 중 요청된 6건 (DESIGN.md §23)
+
+> DESIGN.md §23을 반드시 먼저 전체 읽고 시작할 것. 특히 §23.2~23.4(목차 생성 비동기화, 전체 리서치 시작 비동기 이탈, 서버 재시작 후 복구 불가)는 서로 깊게 얽혀 있어 하나의 통합 설계로 되어 있다 — 순서대로 구현하되 세 개를 따로따로 부분 구현하면 앞뒤가 안 맞을 수 있으니 §23.2~23.4를 통째로 이해한 뒤 시작해.
+
+### 20.1 섹션별 ZIP 다운로드 (DESIGN.md §23.1)
+- [ ] `app/export.py`: `build_section_zip(topic, storage) -> BytesIO` 추가. `zipfile` 표준 라이브러리만 사용. `00-목차.md`(toc.md 내용) + TOC 순서대로 `status == "done"`인 섹션만 `manifest_section["path"]`의 basename으로 압축(미완료는 아예 제외).
+- [ ] `app/main.py`의 `download_document()`에 `format="zip"` 추가(`Literal["markdown", "excel", "zip"]`). `media_type="application/zip"`. 기존 두 포맷과 동일하게 `study_document.md` 존재를 전제 조건으로 유지. **파일명 헤더는 20.6의 수정된 방식(RFC 5987 percent-encoding)을 그대로 적용할 것 — 새로 만드는 엔드포인트에서 예전 버그를 반복하지 말 것.**
+- [ ] 프론트엔드: 다운로드 링크가 있는 세 곳(홈 카드, 진행 화면, 문서 화면)에 "다운로드 (섹션별 ZIP)" 추가.
+- [ ] 테스트: 일부 섹션만 완료된 토픽에서 zip을 만들어 `zipfile.ZipFile`로 재오픈, `00-목차.md` + done 섹션만 있고 미완료는 없는지 확인.
+
+### 20.2~20.4 목차 생성 비동기화 · 전체 리서치 시작 비동기 이탈 · 서버 재시작 후 복구 (DESIGN.md §23.2~23.4)
+
+- [ ] `app/config.py`: `toc_timeout_seconds: float = 180`(env `TOC_TIMEOUT_SECONDS`, 1~1200 검증) 추가.
+- [ ] `app/storage.py`:
+  - `OutputStorage.initialize_pending_manifest(self, *, depth: str) -> dict` 추가 — `sections: []`, `toc_status: "generating"`인 최소 manifest 저장.
+  - `OutputStorage.initialize_manifest(...)`에 `created_at: str | None = None` 파라미터 추가(주면 그 값 사용, 없으면 `utc_now()`), `toc_status: "done"`도 명시적으로 기록하도록 수정.
+  - `OutputStorage.mark_toc_error(self, message: str) -> dict` 추가 — `toc_status="error"`, `toc_error=message` 기록.
+  - 모듈 함수 `reconcile_stale_jobs(output_root: str | Path) -> None` 추가 — 모든 토픽 순회하며 `toc_status == "generating"` → `"error"`(+ 안내 메시지), 섹션 `status == "in_progress"` → `"pending"`으로 되돌림. 읽기 실패한 매니페스트는 건너뛰고 경고만(전체를 막지 않음). 이미 정상 상태인 매니페스트는 다시 쓰지 않음(불필요한 파일 쓰기 없음).
+- [ ] `app/jobs.py`:
+  - `ResearchJob`에 `kind: Literal["section", "build", "toc"]`, `section_ids: tuple[str, ...] = ()`, `depth: str = "standard"`, `num_sections: int | None = None` (기본값으로 기존 두 kind와 호환 유지).
+  - `enqueue_toc_generation(topic, *, depth, num_sections)` 추가.
+  - `_run()`에 `"toc"` 분기 추가 → `_generate_toc(job)`: `app.toc.generate_toc(...)`를 `asyncio.wait_for(..., timeout=settings.toc_timeout_seconds)`로 감싸 호출, 실패 시 `storage.mark_toc_error(str(exc))` 후 재raise.
+- [ ] `app/main.py`:
+  - `create_app()`의 `lifespan`에서 `research_output_dir.mkdir(...)` 직후 `reconcile_stale_jobs(...)` 1회 호출(큐 시작 전).
+  - `JobQueue` 프로토콜에 `enqueue_toc_generation` 시그니처 추가.
+  - `create_topic()`: `generate_toc()` 직접 호출 대신 `candidate.initialize_pending_manifest(depth=payload.depth)` → `enqueue_toc_generation(...)` → 즉시 `{"slug": candidate.topic_slug, "status": "queued"}` 반환. 상태 코드 201 → 202.
+  - `_topic_detail()`: manifest 먼저 읽고 `toc_status != "done"`이면 `toc.json` 읽기 시도 없이 `{"toc": [], "manifest": manifest}` 반환.
+  - `_topic_summary()`: 응답에 `"toc_status": manifest.get("toc_status", "done")` 추가.
+  - `delete_topic()`: `manifest.get("toc_status") == "generating"`일 때도 409로 막도록 조건 추가.
+- [ ] 프론트엔드(`app/static/app.js`):
+  - `renderNewTopic()`: `result.slug`로 네비게이션(응답이 이제 `{slug, status}`).
+  - `renderToc()`: `manifest.toc_status`가 `"generating"`이면 폴링되는 "목차 생성 중" 패널, `"error"`면 `manifest.toc_error` 표시 + 삭제 버튼만, 그 외엔 기존과 동일.
+  - `topicCard()`: `toc_status`에 따라 배지 표시(`.status-badge.in_progress`/`.error` 재사용, 새 CSS 불필요), "열기" 링크를 `toc_status !== "done"`이면 `#/topic/{slug}/toc`로.
+  - `#build-all` 클릭 핸들러: `await` 없이 fetch를 시작만 하고 즉시 progress 화면으로 이동, 실패는 `.catch()`로 토스트만. 개별 "이 섹션만 리서치" 버튼은 건드리지 말 것(이번 요청에 없음).
+- [ ] 테스트(DESIGN.md §23.7 그대로): config 기본값, storage 신규 함수들(특히 `reconcile_stale_jobs`의 "정상 상태는 안 건드림" 케이스), jobs.py의 toc job + 타임아웃/실패 처리, main.py의 202 응답/생성-중 조회/삭제 차단/재시작 시뮬레이션 후 리컨실리에이션.
+
+### 20.5 섹션 상세 화면 위/아래 모두 이전·다음 버튼 (DESIGN.md §23.5)
+- [ ] `app/static/app.js`의 `renderSectionDocument()`: 같은 nav 블록을 본문 위와 아래 모두에 렌더링.
+
+### 20.6 엑셀 다운로드 오류 수정 (DESIGN.md §23.6)
+- [ ] `app/main.py`: `download_document()`의 엑셀(및 20.1의 zip) `Content-Disposition` 헤더를 `urllib.parse.quote()`로 퍼센트 인코딩한 뒤 `filename*=utf-8''<encoded>` 형식으로 직접 구성(Starlette의 `FileResponse`가 비-ASCII 파일명에 하는 것과 동일한 방식). 마크다운 경로(`FileResponse`)는 이미 정상이니 건드리지 말 것.
+- [ ] `app/export.py`: `openpyxl.cell.cell.ILLEGAL_CHARACTERS_RE`로 문자열을 정리하는 헬퍼 추가, 워크북에 쓰는 모든 문자열 값(목차 제목/설명, 본문, 출처 제목/URL, 워크북 제목)에 적용. 본문은 제어 문자 제거 후 §21의 길이 제한 자르기 순서 유지.
+- [ ] 테스트: 한글 slug로 엑셀 다운로드 API 호출이 200을 반환하는지, 제어 문자가 섞인 섹션 본문으로도 엑셀이 크래시 없이 만들어지는지(`tests/test_export.py`).
+
+### 공통
+- [ ] `docs/setup.md` 갱신: 새 환경변수(`TOC_TIMEOUT_SECONDS`), `POST /api/topics`가 이제 202를 반환하고 목차가 백그라운드에서 생성된다는 점, 섹션별 ZIP 다운로드, 이전/다음 버튼 위치, 서버 재시작 후 자동 복구 동작 반영.
+- [ ] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마.
+- [ ] 논리 단위로 커밋 나눠서 push까지.
+
+---
+
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
 - [x] 구현 코드 리뷰 — 발견한 4건(전부 심각도 높음)을 직접 수정: `gpt-researcher` 0.16.0 import 버그 → 버전 상한 고정, DeepSeek-only 설정에서 임베딩 때문에 죽는 문제 → `EMBEDDING` 기본값 추가, `RETRIEVER` 환경변수 충돌로 2섹션 이상 `build_study_document`가 항상 실패하던 버그 → 수정, 한글 주제가 해시 폴더명으로 뭉개지던 `slugify` 버그 → 수정. 낮은 우선순위 2건(SearXNG 빈 검색 결과 조용히 통과, `SEARXNG_SECRET` 무효)은 DESIGN.md/docs/setup.md에 기록만 하고 미수정.
 - [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.
