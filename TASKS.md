@@ -2,6 +2,8 @@
 
 > 설계 근거는 [DESIGN.md](./DESIGN.md) 참고. 목표는 학습용 문서 생성기: 주제 → 목차 → 섹션별 심화 리서치 → 조립된 학습 문서. codex가 아래 순서대로 구현.
 
+> **2026-07-26 전환**: Phase 0-11(아래)은 MCP 서버로 구현했던 기록이고 전부 완료됐다. 이제 MCP를 걷어내고 개인 웹앱(FastAPI + Docker Compose + Cloudflare Quick Tunnel)으로 바꾼다 — **Phase 12**가 지금 할 일이다. Phase 0-11 중 `toc.py`/`research.py`/`assemble.py`/`storage.py`/`schemas.py`/`config.py`의 핵심 로직과 DeepSeek/임베딩/gpt-researcher 버전 핀 설정은 그대로 재사용하고, MCP 관련 부분(Phase 6, 7, 11)만 대체된다. 자세한 것은 DESIGN.md §15 "MCP → 웹앱 전환" 참고.
+
 ## Phase 0 — 프로젝트 뼈대
 - [x] `pyproject.toml` 작성 (의존성: `mcp`, `gpt-researcher`, `python-dotenv`, `pydantic`, `httpx` 등), Python 버전 고정
 - [x] `.gitignore` 작성 (`.env`, `__pycache__/`, `outputs/`, `.venv/`, `*.pyc`)
@@ -91,6 +93,64 @@
 - [x] 실제 `MCP_TRANSPORT=streamable-http` 서버 + cloudflared 2026.5.2 Quick Tunnel에서 curl 검증: 무인증 `401`, 올바른 토큰의 MCP `initialize` 요청 `200` (2026-07-26).
 - [x] Phase 9와 동일한 커밋 규율: 논리 단위로 커밋 분리, `.env`/토큰 값이 커밋에 안 들어가는지 확인 후 push.
 
+## Phase 12 — MCP 제거, 개인 웹앱으로 전환 (DESIGN.md 전체 재작성분, 특히 §5, §7-13, §15)
+
+> Phase 0-11은 완료된 과거 기록이며 그대로 두고 참고만 한다. 이 Phase가 지금 구현 대상이다.
+
+### 12.0 삭제 (DESIGN.md §15 그대로)
+- [ ] `mcp_server/server.py`, `mcp_server/auth.py` 삭제
+- [ ] `.mcp.json` 삭제
+- [ ] `scripts/tunnel.sh` 삭제
+- [ ] `tests/test_auth.py`, `tests/test_server.py` 삭제
+- [ ] `pyproject.toml`에서 `mcp` 의존성 제거
+- [ ] `.env.example`에서 `MCP_TRANSPORT`/`MCP_HOST`/`MCP_PORT`/`MCP_BEARER_TOKEN`/`MCP_SERVER_NAME` 제거
+- [ ] README.md/docs/setup.md의 Claude Code/Codex MCP 등록 안내 전체 제거 (README.md는 이후 Claude가 마무리하지만, 명백히 죽은 MCP 안내는 codex가 지워도 됨 — 헷갈리지 않게 "웹앱으로 전환됨, 자세한 사용법은 docs/setup.md 참고" 한 줄 정도로만 남겨둘 것)
+
+### 12.1 디렉터리 이름 변경
+- [ ] `mcp_server/` → `app/`로 이름 변경, 패키지 내부 `from mcp_server....` import 전부 `from app....`로 갱신 (재사용 파일: `toc.py`, `research.py`, `assemble.py`, `storage.py`, `schemas.py`, `config.py`, 관련 테스트 전부)
+
+### 12.2 config.py 정리
+- [ ] `mcp_transport`/`mcp_host`/`mcp_port`/`mcp_bearer_token`/`mcp_server_name` 필드와 관련 검증 로직 제거
+- [ ] `site_password: str | None` 필드 추가 (`SITE_PASSWORD` 환경변수에서 로드, 필수 아님 — 비어있으면 인증 없이 구동하되 시작 시 경고 로그)
+- [ ] `research_output_dir` 기본값을 컨테이너 환경에 맞게 조정 검토 (`.env.example`은 `/data/outputs` 같은 컨테이너 내부 경로 예시로)
+- [ ] DeepSeek/Anthropic/OpenAI/임베딩/gpt-researcher 버전 핀 관련 필드·검증은 전부 그대로 유지 (건드리지 말 것)
+
+### 12.3 FastAPI 앱 (`app/main.py`, 신규)
+- [ ] DESIGN.md §7 표의 8개 라우트 구현: `POST /api/topics`, `GET /api/topics`, `GET /api/topics/{slug}`, `POST /api/topics/{slug}/sections/{section_id}/research`, `POST /api/topics/{slug}/build`, `GET /api/topics/{slug}/document`, `GET /api/topics/{slug}/download`, `DELETE /api/topics/{slug}`
+- [ ] `POST .../research`, `POST .../build`는 즉시 202를 반환하고 실제 작업은 `app/jobs.py`의 큐에 등록 (아래 12.4)
+- [ ] `GET /api/topics`는 `outputs/` 디렉터리를 스캔해서 각 주제의 manifest 요약(진행률, 생성일 등) 반환
+- [ ] `SITE_PASSWORD`가 설정돼 있으면 모든 `/api/*` 라우트와 정적 프론트엔드에 FastAPI `HTTPBasic` + `secrets.compare_digest`로 인증 적용 (DESIGN.md §12)
+- [ ] 정적 프론트엔드(`app/static/`)를 FastAPI `StaticFiles`로 서빙
+- [ ] 존재하지 않는 `slug` 요청 시 404, 진행 중인 섹션에 중복 리서치 요청 시 409 등 명확한 에러 응답
+
+### 12.4 백그라운드 작업 큐 (`app/jobs.py`, 신규)
+- [ ] 프로세스 내 `asyncio` 기반 **직렬** 작업 큐 구현 (동시에 하나만 실행 — DESIGN.md §8 이유 참고: `_configure_gpt_researcher`의 `os.environ` 전역 변경이 병렬 실행 시 경쟁 상태를 만듦)
+- [ ] 큐에 쌓인/실행 중인 작업은 `manifest.json`의 섹션 상태(`pending`→`in_progress`→`done`/`error`)로 이미 표현되므로, 별도 작업 상태 저장소를 새로 만들지 말고 이 상태를 그대로 진행 상황 소스로 사용
+
+### 12.5 프론트엔드 (`app/static/`, 신규)
+- [ ] 빌드 툴체인 없는 순수 HTML/CSS/바닐라 JS로 DESIGN.md §9의 4개 화면 구현: 홈(주제 목록+다운로드/삭제), 새 주제 생성, 목차 화면(전체 리서치 시작 버튼 + 섹션별 개별 리서치 버튼), 진행/상세 화면(폴링 기반 상태 갱신)
+- [ ] 반응형 CSS로 모바일 브라우저에서도 정상 동작 확인 (실제 폰 화면 크기로 최소 1회 확인 권장)
+
+### 12.6 Docker Compose / 배포
+- [ ] `Dockerfile` 작성 (app 이미지: Python 3.12, `pip install -e .`, uvicorn으로 `app.main:app` 구동)
+- [ ] `docker-compose.yml`에 `app`(포트 미노출, `outputs/`를 호스트 디렉터리에 바인드 마운트), `cloudflared`(`command: tunnel --url http://app:8000`) 서비스 추가. 기존 `redis`/`searxng`는 유지하되 `SEARXNG_URL`을 컨테이너 네트워크 호스트명(`http://searxng:8080`)으로 조정
+- [ ] `scripts/up.sh`: `docker compose up -d` + 헬스체크 대기 + 아래 `get-tunnel-url.sh` 호출
+- [ ] `scripts/down.sh`: `docker compose down`
+- [ ] `scripts/get-tunnel-url.sh`: `docker compose logs cloudflared`에서 최신 `https://*.trycloudflare.com` URL 추출해 출력
+
+### 12.7 테스트
+- [ ] `tests/test_api.py` (신규): FastAPI `TestClient`/`httpx.AsyncClient`로 각 라우트 스모크 테스트 (주제 생성, 목록 조회, 삭제, 인증 미들웨어 동작 — 실제 LLM 호출은 목이나 기존 테스트 패턴대로 팩토리 주입)
+- [ ] 기존 `test_toc.py`/`test_research.py`/`test_assemble.py`/`test_storage.py`는 import 경로만 `app.`으로 바꿔서 그대로 통과해야 함 (로직 변경 금지)
+
+### 12.8 실사용 검증
+- [ ] 로컬(WSL 등)에서 `docker compose up -d`로 전체 스택(redis/searxng/app/cloudflared) 기동 확인
+- [ ] `scripts/get-tunnel-url.sh`로 뽑은 URL로 실제 브라우저 접속 → 주제 생성 → 목차 확인 → 섹션 1개 리서치 → 다운로드 → 삭제까지 전 과정 curl 또는 브라우저로 최소 1회 실행
+- [ ] `SITE_PASSWORD` 없이 접속 시 401(또는 정책에 맞는 거부)이 실제로 뜨는지 확인
+- [ ] 결과를 커밋 메시지에 남길 것
+
+### 12.9 커밋 규율
+- [ ] 논리 단위로 커밋 분리 (예: 삭제/이름변경 → config 정리 → API → jobs → 프론트엔드 → Docker/배포 → 테스트), `.env`/비밀번호가 커밋에 안 들어가는지 확인 후 push
+
 ---
 
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
@@ -98,4 +158,5 @@
 - [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.
 - [x] `docs/setup.md` 사용법 문서 작성
 - [x] Phase 11 완료 후: 코드 리뷰 완료 (설계대로 구현됨, 추가 버그 없음). 로컬 stdio 모드 회귀 없음 확인 (`.env`에 원격 변수 미설정 시 `mcp_transport="stdio"`, `token_verifier=None` 그대로). streamable-http 서버를 직접 띄워 `curl`로 무인증/오답 토큰(401), 정답 토큰(200), 터널 Host 헤더를 흉내낸 요청(200)까지 독립적으로 재검증 완료. claude.ai 웹 커스텀 커넥터는 브라우저 UI 라이브 검증까지는 못함 — docs/setup.md 7.3에 미검증임을 명시. `docs/setup.md`에 "7. 원격 접속 (선택)" 섹션 작성, README.md의 stdio-only 문구도 갱신.
+- [ ] Phase 12 완료 후: 코드 리뷰, Docker Compose로 전체 스택 실제 기동 검증, Quick Tunnel URL로 모바일 브라우저 접속 검증, `docs/setup.md`를 웹앱 배포/사용법 기준으로 재작성 (MCP 관련 내용 제거)
 - [ ] (향후, 별도 설계) 오디오 오버뷰 파이프라인 설계

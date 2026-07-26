@@ -1,272 +1,270 @@
-# Deep Research MCP — 설계 문서
+# Deep Research 개인 웹 앱 — 설계 문서
+
+> **2026-07-26 전환**: 이 프로젝트는 원래 Claude Code/Codex용 MCP 서버로 설계됐다 (과거 버전은 git 히스토리 참고). 실사용해보니 핵심 워크플로우(`generate_toc` → `research_section` → `assemble`)가 에이전트의 판단이 필요 없는 **결정론적 배치 파이프라인**이라, MCP로 감쌀 이유가 약했다. 그래서 MCP를 걷어내고, 개인 우분투 서버에 Docker Compose로 띄워 Cloudflare Quick Tunnel로 접속하는 **개인용 웹 앱**으로 재설계한다. §15에 정확히 뭐가 없어지는지 정리해뒀다.
 
 ## 1. 목적 (Why)
 
-이 프로젝트는 범용 웹 리서치 도구가 아니라 **학습용 문서 생성기**다.
+여전히 범용 웹 리서치 도구가 아니라 **학습용 문서 생성기**다.
 
 - 사용자가 과목/주제를 던지면 → **목차(TOC)를 먼저 뽑고** → **목차의 각 섹션을 독립적으로 심화 리서치**해서 → 섹션들을 모은 **학습 문서**를 만든다.
-- 벤치마크는 ChatGPT/Gemini의 "Deep Research" 기능이다. 그 기능들은 질문 하나에 리포트 하나(단일 선형 리포트)를 내주는 방식인데, 이 프로젝트는 **목차 기반으로 섹션마다 독립된 리서치 예산(검색+합성)을 쓰기 때문에 섹션당 깊이와 구조적 완결성에서 우위**를 노린다.
-- 이후 단계(이번 범위 아님, 출력 구조만 대비): 완성된 학습 문서를 기반으로 오디오 오버뷰(팟캐스트 스타일 요약) 생성. 그래서 출력은 처음부터 **섹션 단위 파일**로 저장해 나중에 오디오 파이프라인이 그대로 소비할 수 있게 한다.
+- 벤치마크는 ChatGPT/Gemini의 "Deep Research" 기능이다 (운영적 정의는 §3, 변경 없음).
+- 이후 단계(이번 범위 아님): 오디오 오버뷰. 출력은 섹션 단위 파일로 유지해 대비한다.
+- **새로 추가되는 목적**: 개인 서버에 상시 띄워두고, 휴대폰을 포함한 아무 브라우저에서나 Cloudflare Quick Tunnel URL로 접속해 주제를 넣고 결과를 확인·다운로드·삭제할 수 있어야 한다. 완전히 1인 전용이다.
 
 ## 2. 비목표 (Non-goals)
 
-- 오디오 오버뷰 생성 자체 — 이번 범위 아님. 단, 출력 구조(섹션별 md 파일 + 메타데이터)는 이를 염두에 두고 설계.
-- 원격/다중 사용자 접근, 인증, 원격 호스팅(Cloudflare 등) — 로컬 stdio MCP만 사용.
-- SearXNG를 공개 인터넷에 노출하는 것 — localhost 바인딩만.
-- 자체 LLM 서빙 — LLM은 Anthropic/OpenAI 등 외부 API 키를 그대로 사용.
+- 오디오 오버뷰 생성 자체.
+- **MCP/에이전트 프로토콜** — Claude Code, Codex, claude.ai 커넥터 연동 전부 제거. 이 앱은 브라우저로 직접 쓴다.
+- 다중 사용자, 회원가입/역할 기반 권한 — 단일 공유 비밀번호(§12)로 충분하다.
+- Cloudflare 정식 배포(Workers/Containers) — 이전에 검토했지만(과거 §14 참고, git 히스토리), Quick Tunnel로 충분하다는 결론은 유지.
+- SearXNG를 공개 인터넷에 직접 노출하는 것 — 여전히 컨테이너 내부 네트워크에만 존재.
 
-## 3. "GPT/Gemini 딥리서치를 이긴다"의 운영적 정의
+## 3. "GPT/Gemini 딥리서치를 이긴다"의 운영적 정의 (변경 없음)
 
 | 기준 | GPT/Gemini Deep Research | 이 프로젝트 |
 |---|---|---|
 | 구조 | 단일 선형 리포트 | 목차 기반, 섹션별 독립 문서 |
 | 리서치 예산 | 전체 질문에 공유된 예산 | 섹션마다 별도 검색/합성 패스 |
 | 반복 가능성 | 보통 1회성 | 섹션 단위로 재생성/심화 가능 |
-| 출력 | 채팅 응답 (휘발성) | 로컬 파일로 영구 저장, 구조화 |
-| 사용자 개입 | 결과 나온 후에만 피드백 가능 | 목차 단계에서 미리 검토/수정 후 본문 생성 가능 |
+| 출력 | 채팅 응답 (휘발성) | 서버에 영구 저장, 다운로드 가능 |
+| 사용자 개입 | 결과 나온 후에만 피드백 가능 | 목차 단계에서 미리 검토 후 본문 생성 여부 결정 |
 
 ## 4. 아키텍처 개요
 
 ```mermaid
 flowchart LR
-    subgraph Host["로컬 머신"]
-        subgraph CLI["MCP 클라이언트"]
-            CC["Claude Code CLI"]
-            CX["Codex CLI"]
-        end
-
-        subgraph MCP["deep-research MCP 서버 (stdio, Python)"]
-            SRV["server.py (mcp SDK)"]
-            TOC["toc.py — 목차 생성"]
-            SEC["research.py — 섹션별 심화 리서치"]
-            ASM["assemble.py — 문서 조립"]
-        end
-
-        subgraph Docker["Docker Compose"]
-            SXNG["SearXNG (:8080, JSON API)"]
-            REDIS["Redis"]
-        end
+    subgraph Client["아무 브라우저 (PC/모바일)"]
+        UI["웹 UI"]
     end
 
-    LLM[("LLM API (Anthropic/OpenAI)")]
+    subgraph Cloudflare["Cloudflare"]
+        QT["Quick Tunnel\n(https://*.trycloudflare.com)"]
+    end
 
-    CC -- stdio --> SRV
-    CX -- stdio --> SRV
-    SRV --> TOC
-    SRV --> SEC
-    SRV --> ASM
+    subgraph Ubuntu["개인 우분투 서버 — Docker Compose"]
+        subgraph App["app 컨테이너 (FastAPI)"]
+            API["REST API + 정적 프론트엔드"]
+            JOB["백그라운드 작업 큐 (직렬)"]
+            TOC["toc.py"]
+            SEC["research.py"]
+            ASM["assemble.py"]
+        end
+        SXNG["searxng (:8080, JSON API)"]
+        REDIS["redis"]
+        CF["cloudflared 컨테이너"]
+        VOL[("outputs/ 볼륨\n(호스트에 영구 저장)")]
+    end
+
+    LLM[("DeepSeek API")]
+
+    UI -- HTTPS --> QT
+    QT -- 컨테이너 네트워크 --> CF
+    CF -- http://app:8000 --> API
+    API --> JOB
+    JOB --> TOC
+    JOB --> SEC
+    JOB --> ASM
     TOC -- 목차 설계 --> LLM
     SEC -- 검색 --> SXNG
     SEC -- 섹션 합성 --> LLM
     SXNG --- REDIS
+    API <--> VOL
 ```
 
-## 5. 리포지토리 구조 (제안)
+핵심 변화: MCP 클라이언트(Claude Code/Codex) 자리를 **웹 UI**가 대체하고, MCP stdio/streamable-http transport 자리를 **FastAPI REST API**가 대체한다. `toc.py`/`research.py`/`assemble.py`/`storage.py`/`config.py`의 도메인 로직은 프레임워크에 종속되지 않게 짜여 있어서 거의 그대로 재사용한다.
+
+## 5. 리포지토리 구조
 
 ```
 researcher/
 ├── README.md
 ├── DESIGN.md
 ├── TASKS.md
-├── docker-compose.yml
+├── docker-compose.yml            # redis, searxng, app, cloudflared 네 개 서비스
+├── Dockerfile                    # app 이미지
 ├── searxng/
 │   └── settings.yml
-├── mcp_server/
+├── app/                           # (구 mcp_server/ 를 이 이름으로 변경)
 │   ├── __init__.py
-│   ├── server.py                # MCP stdio 엔트리포인트, tool 등록
-│   ├── toc.py                   # generate_toc 로직
-│   ├── research.py              # research_section / GPTResearcher 래퍼
-│   ├── assemble.py              # 섹션 파일 -> study_document.md 조립
-│   ├── config.py                # env 로딩/검증
-│   ├── schemas.py                # pydantic 입출력 스키마
-│   └── storage.py                # outputs/<topic-slug>/ 파일 구조 관리, manifest.json
-├── pyproject.toml
+│   ├── main.py                    # FastAPI 앱, 라우트, 백그라운드 작업, basic auth
+│   ├── toc.py                     # 그대로 재사용
+│   ├── research.py                # 그대로 재사용
+│   ├── assemble.py                # 그대로 재사용
+│   ├── config.py                  # env 로딩/검증 (MCP 관련 필드 제거, SITE_PASSWORD 추가)
+│   ├── schemas.py                 # pydantic 모델 — FastAPI 요청/응답 스키마로 재사용
+│   ├── storage.py                 # 그대로 재사용
+│   ├── jobs.py                    # 신규: 직렬 백그라운드 작업 큐
+│   └── static/                    # 신규: 프론트엔드 (빌드 툴체인 없는 순수 HTML/CSS/JS)
+│       ├── index.html
+│       ├── app.js
+│       └── style.css
+├── pyproject.toml                 # mcp 의존성 제거, fastapi/uvicorn 추가
 ├── .env.example
 ├── .gitignore
 ├── tests/
 │   ├── test_toc.py
 │   ├── test_research.py
-│   └── test_assemble.py
+│   ├── test_assemble.py
+│   ├── test_storage.py
+│   └── test_api.py                # 신규: FastAPI 엔드포인트 테스트 (httpx AsyncClient)
+├── scripts/
+│   ├── up.sh                      # docker compose up -d + 헬스체크 + 터널 URL 출력
+│   ├── down.sh                    # docker compose down
+│   └── get-tunnel-url.sh          # cloudflared 컨테이너 로그에서 현재 URL 추출
 └── docs/
-    └── setup.md                  # 구현 완료 후 Claude가 작성
+    └── setup.md
 ```
 
-## 6. 출력 파일 구조
+제거 대상은 §15에 정리.
+
+## 6. 출력 파일 구조 (변경 없음)
 
 ```
 outputs/
   <topic-slug>/
-    manifest.json          # topic, created_at, depth, 섹션별 상태(pending/done)/타임스탬프/소스 수
-    toc.md                 # 사람이 읽는 목차
-    toc.json                # 구조화된 목차 (id, title, description, subsections)
+    manifest.json          # topic, created_at, depth, 섹션별 상태(pending/in_progress/done/error)/타임스탬프/소스 수
+    toc.md
+    toc.json
     sections/
-      01-<slug>.md          # 섹션별 심화 리서치 결과 + 인용 소스
+      01-<slug>.md
       02-<slug>.md
       ...
-    study_document.md       # toc.json 순서대로 섹션들을 이어붙인 최종 문서
+    study_document.md
 ```
 
-`manifest.json`으로 섹션별 완료 상태를 추적해서, 전체를 재실행하지 않고 특정 섹션만 재생성할 수 있게 한다.
+Docker Compose에서 `outputs/`를 호스트 디렉터리에 바인드 마운트해 컨테이너를 내렸다 올려도 데이터가 남게 한다 (§11).
 
-## 7. MCP 도구 정의
+## 7. REST API
 
-### 7.1 `generate_toc`
-주제를 입력하면 목차를 생성한다 (아직 본문 리서치는 하지 않음 — 사용자가 목차를 검토/수정할 기회를 줌).
+인증은 모든 엔드포인트에 공통 적용 (§12). 아래는 라우트별 계약만 기술.
 
-**입력**: `topic` (string, required), `depth` (`standard`|`deep`, default `standard`), `num_sections` (int, optional — 힌트)
-**출력**: `toc: [{id, title, description, subsections: [{id, title, description}]}]`, `toc_path`
-**부작용**: `outputs/<topic-slug>/toc.md`, `toc.json`, `manifest.json` 생성/갱신
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| `POST` | `/api/topics` | `{topic, depth, num_sections?}` → `generate_toc()` 실행 후 TOC 반환. **본문 리서치는 시작하지 않음** — 이 응답을 UI가 보여주고, 사용자가 다음 행동을 고른다. |
+| `GET` | `/api/topics` | 저장된 모든 주제 목록 (topic, slug, depth, 생성일, 완료 섹션 수/전체 섹션 수, study_document 존재 여부) — `outputs/` 스캔 + manifest 요약. |
+| `GET` | `/api/topics/{slug}` | TOC + manifest(섹션별 상태) 상세. UI가 폴링해서 진행 상황을 갱신하는 데 씀. |
+| `POST` | `/api/topics/{slug}/sections/{section_id}/research` | 섹션 하나 리서치 시작 (`research_section`, 작업 큐에 등록, 즉시 202 반환). |
+| `POST` | `/api/topics/{slug}/build` | 미완료 섹션 전체 리서치 + 조립 (`build_study_document`, 작업 큐 등록, 즉시 202 반환). `sections_filter`, `force_regenerate` 지원. |
+| `GET` | `/api/topics/{slug}/document` | 조립된 `study_document.md` 본문 (브라우저에서 바로 렌더링용). |
+| `GET` | `/api/topics/{slug}/download` | `study_document.md`를 첨부파일로 다운로드. |
+| `DELETE` | `/api/topics/{slug}` | 해당 주제의 `outputs/<slug>/` 디렉터리 전체 삭제. |
 
-### 7.2 `research_section`
-목차의 특정 섹션 하나를 심화 리서치한다. 형제 섹션들의 제목/설명을 컨텍스트로 함께 전달해 **섹션 간 내용 중복을 피한다**.
+작업 상태는 별도 DB 없이 기존 `manifest.json`의 섹션별 `status`를 그대로 진행 상황 소스로 쓴다 — 이미 있는 걸 재사용하는 게 새 상태 저장소를 만드는 것보다 낫다.
 
-**입력**: `topic`, `section_id` (required — toc.json 기준), `force` (bool, default false — 이미 완료된 섹션 덮어쓸지)
-**출력**: `content_markdown`, `sources: [{title, url}]`, `section_path`
-**부작용**: `outputs/<topic-slug>/sections/<section_id>-<slug>.md` 저장, `manifest.json` 상태 갱신
+## 8. 백그라운드 작업 모델
 
-### 7.3 `build_study_document`
-전체 파이프라인 오케스트레이션 진입점. TOC가 없으면 먼저 생성하고, 미완료 섹션들을 순회하며 `research_section`을 호출한 뒤, 모두 모아 `study_document.md`로 조립한다.
+- **직렬 처리, 큐 하나**: 리서치 요청(`research_section`/`build_study_document`)은 프로세스 내 `asyncio` 작업 큐에 순서대로 쌓이고 한 번에 하나씩만 실행한다. 1인 사용이라 동시성이 필요 없고, `research.py`의 `_configure_gpt_researcher()`가 `os.environ`을 프로세스 전역으로 덮어쓰는 방식이라 **진짜 병렬 실행은 경쟁 상태(race condition)를 만든다** — 직렬화가 정답이자 이미 검증된(§10 과거 `RETRIEVER` 충돌 버그 참고) 안전한 선택이다.
+- **진행 상황 전달은 폴링**: SSE/WebSocket 대신, UI가 `GET /api/topics/{slug}`를 몇 초 간격으로 폴링해서 `manifest.json`의 섹션 상태 변화를 반영한다. Cloudflare Quick Tunnel + 모바일 네트워크 전환(와이파이↔셀룰러) 환경에서 SSE/WebSocket보다 폴링이 훨씬 덜 끊긴다 — 새로고침 한 번이면 복구되는 단순함이 안정성 이점이 큼.
+- 서버 재시작 시 `in_progress` 상태로 멈춰있는 섹션은 재시작 후 큐에 자동으로 다시 넣지 않는다 (1차 구현 범위 아님) — 사용자가 UI에서 해당 섹션을 다시 트리거하면 됨.
 
-**입력**: `topic`, `depth`, `force_regenerate` (bool, default false — 전체 재생성), `sections_filter` (string[], optional — 특정 섹션만 대상)
-**출력**: `study_document_markdown`, `study_document_path`, `manifest`
-**진행 상황**: 섹션마다 MCP progress notification 전송 (예: "3/8 섹션 완료: <제목>")
+## 9. 웹 UI
 
-### 7.4 `quick_search`
-학습 중 용어 확인 등 가벼운 단발 검색용 (기존과 동일, 변경 없음).
+빌드 툴체인 없는 순수 HTML/CSS/바닐라 JS (`fetch` API로 위 REST 호출). Node/webpack 없이 `app` 이미지에 정적 파일로 포함 — 배포를 단순하게 유지하기 위한 의도적 선택.
 
-**입력**: `query`, `num_results` (default 5)
-**출력**: `results: [{title, url, snippet}]`
+- **홈 (주제 목록)**: 저장된 주제 카드 목록 (제목, 진행률 N/M, 생성일). 각 카드에 "열기" / "다운로드"(완료된 경우) / "삭제" 버튼. 상단에 "새 주제" 입력창.
+- **새 주제 생성**: 주제 텍스트 + `depth`(standard/deep) 입력 → 제출 → `POST /api/topics` → 목차 화면으로 이동.
+- **목차 화면**: 생성된 목차(섹션+하위섹션)를 보여주고, 사용자가 여기서 결정한다 — "**전체 리서치 시작**"(빠른 경로, `build_study_document`) 버튼과, 섹션마다 개별 "**이 섹션만 리서치**" 버튼을 둘 다 노출. 이게 "목차를 뽑을지 안 뽑을지"를 UI 단계로 만든 부분 — 목차만 보고 끝낼 수도, 바로 전체를 돌릴 수도, 섹션별로 골라 돌릴 수도 있다.
+- **진행/상세 화면**: 섹션별 상태 뱃지(pending/in_progress/done/error) + 소스 개수, 몇 초 간격 폴링으로 갱신. "전체 문서 보기", "다운로드", "삭제" 버튼.
+- **모바일 대응**: 반응형 CSS(flexbox + 미디어 쿼리)만으로 충분 — 페이지 수가 적고 표/카드 위주라 별도 프레임워크 불필요.
 
-## 8. 설정 / 환경변수
+## 10. 리스크 / 트레이드오프
 
-`.env` (gitignore 처리, `.env.example`만 커밋):
+- **섹션 간 중복/일관성**: 기존과 동일, `research_section`에 형제 섹션 컨텍스트 전달로 완화 (변경 없음).
+- **장시간 실행**: 이제 브라우저 탭을 닫아도 서버가 계속 진행한다는 게 stdio/streamable-http 시절보다 오히려 나음 — 폴링으로 다시 열어서 확인하면 됨.
+- **API 비용**: 기존과 동일, DeepSeek 전환(§14)으로 단가 낮춤.
+- **SearXNG 크롤링 차단**: 기존과 동일.
+- **동시 실행**: §8에서 결정한 대로 의도적으로 직렬화.
+- **검색 실패의 조용한 무시**: 기존 이슈 그대로 유지 (미수정, `manifest.json`의 `source_count`로 확인 가능).
+- **Quick Tunnel 인증**: URL 자체는 인증이 아니다 (§12).
+- **서버 다운타임 중 작업 손실**: `in_progress` 상태에서 컨테이너가 죽으면 해당 섹션은 재시작 후에도 `in_progress`로 남아 자동 재시도되지 않는다 — 사용자가 수동으로 다시 트리거해야 함 (1인 사용 규모에서는 허용 가능한 트레이드오프로 판단).
+
+## 11. 배포 (Ubuntu + Docker Compose)
+
+### 11.1 서비스 구성 (`docker-compose.yml`)
+
+- `redis`, `searxng` — 기존과 동일, `127.0.0.1:8080`에만 바인딩 (호스트에도 외부 노출 안 함, `app`이 컨테이너 네트워크로만 접근).
+- `app` — 신규. `Dockerfile`로 빌드, `outputs/`를 호스트 디렉터리에 바인드 마운트, 내부 포트 8000. **호스트에 포트 노출하지 않는다** (`ports:` 없음) — `cloudflared`만 `app`에 접근하면 되므로 컨테이너 네트워크 안에서만 통신.
+- `cloudflared` — 신규. 공식 `cloudflare/cloudflared` 이미지, `command: tunnel --url http://app:8000`. 이것도 컴포즈 서비스로 넣어서 `docker compose up`/`down` 한 번으로 앱+터널이 통째로 뜨고 내려가게 한다 (요구사항: "자동화 체인으로 띄웠다 내리기 편했으면").
+
+### 11.2 라이프사이클 스크립트
+
+- `scripts/up.sh`: `docker compose up -d` → `searxng`/`app` 헬스체크 대기 → `scripts/get-tunnel-url.sh` 호출해 현재 세션의 Quick Tunnel URL을 화면에 출력.
+- `scripts/down.sh`: `docker compose down`.
+- `scripts/get-tunnel-url.sh`: `docker compose logs cloudflared`에서 `https://*.trycloudflare.com` 패턴을 grep해 최신 URL만 출력 (Quick Tunnel URL은 재시작마다 바뀌므로 매번 새로 조회해야 함).
+
+### 11.3 로그
+
+- `docker compose logs -f app` — 애플리케이션/작업 큐 로그.
+- `docker compose logs -f cloudflared` — 터널 연결 상태 + URL.
+- 별도 로그 수집기(예: Loki 등)는 이번 범위 아님 — `docker compose logs`로 충분한 개인 사용 규모.
+
+## 12. 인증 / 보안
+
+요청사항은 "DeepSeek API 키 하나만 비밀키로 가지면 좋겠다"였지만, 이 부분은 **그 원칙에 하나만 예외를 둔다**: Quick Tunnel URL은 무작위 문자열일 뿐 실제 인증이 아니라서, 아무 보호 장치 없이 그대로 열어두면 URL을 아는(또는 우연히 찾은) 누구나 당신의 DeepSeek 예산을 쓰고 개인 학습 문서를 읽고 다운로드/삭제까지 할 수 있다.
+
+그래서 **HTTP Basic Auth 하나만 추가**한다 — `SITE_PASSWORD` 환경변수 하나로 끝나는, 별도 계정/로그인 화면/세션 관리가 필요 없는 가장 가벼운 방식이다. 브라우저(모바일 포함)가 기본 지원하는 로그인 팝업을 그대로 쓴다.
+
+- `.env`에 `SITE_PASSWORD=<임의 비밀번호>`.
+- `app/main.py`에 FastAPI `HTTPBasic` 의존성을 전체 라우터에 미들웨어로 적용, `secrets.compare_digest`로 비교.
+- 이건 API 키처럼 발급받거나 회전시킬 필요가 없는, 당신이 직접 정하는 로컬 비밀번호라 "관리해야 할 비밀"이 실질적으로 늘어나는 건 아니라고 판단했다 — 다만 원치 않으면 `SITE_PASSWORD`를 비워서 끌 수 있게 만들고, 그 경우 서버 시작 시 "인증 없이 공개 노출됨" 경고를 로그에 남기는 정도로 타협한다.
+
+## 13. 설정 / 환경변수
 
 ```
-# 기본 프로바이더: DeepSeek (비용 이유, 12장 참고)
+# LLM (기본: DeepSeek)
 DEEPSEEK_API_KEY=...
 FAST_LLM=deepseek:deepseek-v4-flash
 SMART_LLM=deepseek:deepseek-v4-flash
 STRATEGIC_LLM=deepseek:deepseek-v4-pro
-
-# 대체 프로바이더 (둘 중 하나만 있어도 통과)
+# 대체 프로바이더 (선택)
 # ANTHROPIC_API_KEY=...
 # OPENAI_API_KEY=...
 
-# GPT-Researcher는 검색 결과 유사도 계산에 항상 임베딩 클라이언트를 만든다.
-# 자체 기본값(openai:...)을 그대로 두면 DeepSeek/Anthropic만 있는 설정에서도
-# OPENAI_API_KEY가 없다고 즉시 에러가 난다 (실사용 검증 중 발견). 로컬/무료인
-# huggingface 프로바이더로 고정해 별도 키 없이 동작하게 한다.
+# 임베딩 (로컬/무료, OPENAI_API_KEY 불필요 이유는 §14 하단 참고)
 EMBEDDING=huggingface:sentence-transformers/all-MiniLM-L6-v2
 
 RETRIEVER=searxng
-SEARXNG_URL=http://localhost:8080
+SEARXNG_URL=http://searxng:8080     # 컨테이너 네트워크 내부 호스트명으로 변경
+SEARXNG_SECRET=replace-with-a-random-secret   # 여전히 무효 (알려진 이슈, docs 참고)
 
-MCP_SERVER_NAME=deep-research
-RESEARCH_OUTPUT_DIR=./outputs
+RESEARCH_OUTPUT_DIR=/data/outputs   # 컨테이너 내부 경로, 볼륨으로 마운트
+
+# 웹 앱 전용 (신규)
+SITE_PASSWORD=<임의 비밀번호>
+APP_PORT=8000
 ```
 
-> `deepseek:` 프로바이더 문자열이 설치된 `gpt-researcher` 버전에서 인식되지 않으면 12장의 OpenAI 호환 폴백을 사용한다.
+MCP 전용 변수(`MCP_TRANSPORT`, `MCP_HOST`, `MCP_PORT`, `MCP_BEARER_TOKEN`, `MCP_SERVER_NAME`)는 전부 제거한다.
 
-## 9. 클라이언트 연동
+## 14. LLM 프로바이더: DeepSeek (유지, 과거 §12 내용 그대로 유효)
 
-### Claude Code CLI
-```
-claude mcp add deep-research -- python /path/to/researcher/mcp_server/server.py
-```
+- `DEEPSEEK_API_KEY` 하나로 `FAST_LLM`/`SMART_LLM`/`STRATEGIC_LLM`을 `deepseek:deepseek-v4-flash`/`deepseek:deepseek-v4-pro`로 구동 (2026-07-26 실제 API 호출로 검증됨).
+- GPT-Researcher의 임베딩 클라이언트가 기본적으로 OpenAI를 요구하는 문제는 `EMBEDDING=huggingface:sentence-transformers/all-MiniLM-L6-v2`(로컬, 키 불필요)로 이미 해결되어 있다 — 이 부분은 그대로 재사용, 다시 만들 필요 없음.
+- `gpt-researcher`는 `pyproject.toml`에서 `>=0.14.0,<0.16.0`로 버전 상한이 고정돼 있다 (0.16.0의 import 순서 버그 회피, 이미 검증됨) — 이 핀도 그대로 유지.
+- Anthropic/OpenAI는 계속 대체 옵션으로 `config.py`에 남겨둔다 (비용 거의 없음, 유연성 유지).
 
-### Codex CLI
-`~/.codex/config.toml`:
-```toml
-[mcp_servers.deep-research]
-command = "python"
-args = ["/path/to/researcher/mcp_server/server.py"]
-```
+## 15. MCP → 웹앱 전환: 정확히 뭐가 없어지는가
 
-## 10. 리스크 / 트레이드오프
+codex가 헷갈리지 않도록 명시적으로 나열한다.
 
-- **섹션 간 중복/일관성**: 섹션을 독립적으로 리서치하면 서로 겹치거나 용어가 어긋날 수 있음 → `research_section`에 형제 섹션 컨텍스트를 반드시 전달, 추후 필요시 "일관성 검토 패스" 추가 고려.
-- **장시간 실행**: `build_study_document`는 섹션 수만큼 리서치가 누적되어 수십 분 걸릴 수 있음 → progress notification + 섹션별 중간 저장(중단돼도 완료된 섹션은 남음)으로 완화.
-- **API 비용**: 섹션마다 별도 리서치 패스라 토큰 비용이 단일 리포트 방식보다 큼 → `depth`/`num_sections`로 사용자가 예산 조절, DeepSeek 전환(12장)으로 단가 자체도 낮춤.
-- **SearXNG 크롤링 차단**: 일부 사이트가 차단할 수 있음 → GPT-Researcher의 재시도/폴백 로직 활용.
-- **동시 실행**: 1차 구현은 단순 순차 처리, 이후 필요시 섹션 병렬화 고려.
-- **검색 실패의 조용한 무시**: SearXNG가 특정 섹션에 대해 빈 결과만 반환하면 GPT-Researcher는 오류 대신 "소스를 찾지 못했다"는 문구를 담은 리포트를 정상 반환하고, 현재 `research_section`은 이를 그대로 `done`으로 저장한다 (실사용 검증 중 발견, 아직 미수정). 결과 품질이 이상하면 `manifest.json`의 `source_count`가 0인 섹션이 있는지 확인할 것 — 향후 `source_count == 0`을 에러로 취급할지 여부는 별도 결정 필요.
+**삭제**:
+- `mcp_server/server.py` (FastMCP 엔트리포인트) — `app/main.py`(FastAPI)로 대체.
+- `mcp_server/auth.py` (MCP `TokenVerifier`) — `app/main.py`의 HTTP Basic Auth로 대체.
+- `.mcp.json`, README/docs의 Claude Code/Codex MCP 등록 안내 전체.
+- `scripts/tunnel.sh` (호스트 레벨 wrapper) — `docker-compose.yml`의 `cloudflared` 서비스로 대체.
+- `pyproject.toml`의 `mcp` 의존성.
+- `.env.example`의 `MCP_*` 변수 전부.
+- `tests/test_auth.py`, `tests/test_server.py` (MCP 전용 테스트) — 새 `tests/test_api.py`로 대체.
 
-## 11. MCP와 LLM API 키의 관계 (자주 헷갈리는 부분)
+**이름 변경**: `mcp_server/` → `app/` (내부 import 경로 전부 `mcp_server.` → `app.`로 갱신 필요).
 
-> "MCP로 붙이면 Claude Code/Codex가 이미 쓰고 있는 LLM을 그대로 쓰는 거 아닌가?" — 아니다.
+**그대로 재사용** (내용 변경 없음, 디렉터리만 이동): `toc.py`, `research.py`, `assemble.py`, `storage.py`, `schemas.py`(pydantic 모델은 FastAPI 요청/응답으로 그대로 씀), `config.py`(MCP 관련 필드만 제거, `SITE_PASSWORD` 추가).
 
-MCP는 이미 실행 중인 에이전트(Claude Code, Codex — 각자 자기 LLM 세션을 갖고 있음)와 **도구 서버** 사이의 호출 규약일 뿐이다. `build_study_document` 같은 도구를 호출하면, MCP 서버 프로세스 안에서 GPT-Researcher가 **자신만의 독립적인 다단계 LLM 호출**(검색어 계획 수립 → 소스 요약 → 섹션 본문 작성)을 수행한다. 이 호출은 클라이언트(Claude Code/Codex)의 LLM 세션을 거치지 않고 서버가 직접 LLM API를 때린다. 즉 **어떤 클라이언트로 붙이든 서버 프로세스 자체의 LLM 자격증명이 별도로 필요**하다 — MCP 프로토콜이 이 비용/키를 없애주지 않는다.
+**신규**: `app/main.py`, `app/jobs.py`, `app/static/*`, `Dockerfile`, `docker-compose.yml`의 `app`/`cloudflared` 서비스, `scripts/up.sh`/`down.sh`/`get-tunnel-url.sh`, `tests/test_api.py`.
 
-## 12. LLM 프로바이더: DeepSeek로 전환
+## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
 
-API 키가 어차피 필요하다면, [10장](#10-리스크--트레이드오프)에서 지적한 "섹션별 독립 리서치 패스라 토큰 비용이 크다"는 리스크를 낮추기 위해 **DeepSeek**를 기본 프로바이더로 쓴다 (Anthropic/OpenAI 대비 토큰 단가가 훨씬 저렴 — 섹션 수가 많은 학습 문서 파이프라인 특성상 비용 절감 효과가 큼).
-
-- `DEEPSEEK_API_KEY` 필요 (DeepSeek 콘솔에서 발급).
-- GPT-Researcher는 `FAST_LLM`/`SMART_LLM`/`STRATEGIC_LLM`을 `provider:model` 형식 문자열로 받는다 (예: `deepseek:deepseek-v4-flash`). LiteLLM 직접 호출 규약은 `provider/model`(슬래시)이라 헷갈리기 쉬우니 주의 — 설치된 `gpt-researcher` 버전이 실제로 `deepseek` 프로바이더 문자열을 인식하는지 **반드시 코드/문서로 검증**할 것.
-- **폴백**: 만약 설치된 버전이 `deepseek:` 프로바이더를 지원하지 않으면, DeepSeek가 제공하는 OpenAI 호환 엔드포인트(`https://api.deepseek.com`)를 `openai` 프로바이더 + 커스텀 base URL(`OPENAI_API_BASE`/`OPENAI_BASE_URL`, GPT-Researcher/langchain-openai가 인식하는 이름으로) 조합으로 우회한다.
-- `STRATEGIC_LLM`(목차 설계처럼 계획 품질이 중요한 단계)은 `deepseek-v4-pro`, `FAST_LLM`/`SMART_LLM`(섹션 요약·작성)은 `deepseek-v4-flash`를 사용한다. 두 모델 모두 2026-07-26 실제 API 호출로 검증했다.
-- 품질 트레이드오프: DeepSeek는 Claude/GPT 대비 저렴하지만 계획 수립(TOC 설계) 품질이 다를 수 있음 — 실사용 검증(11장 하단 체크리스트) 단계에서 목차 품질을 특별히 확인해야 한다.
-- Anthropic/OpenAI 키도 계속 대체 옵션으로 지원한다 (`config.py`가 `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`DEEPSEEK_API_KEY` 중 하나만 있어도 통과하도록).
-
-## 13. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
-
-- 구현 완료 후 코드 리뷰 (`/code-review`).
-- `docs/setup.md` 사용법 문서 작성.
-- 실사용 검증: 실제 과목/주제로 `build_study_document` 끝까지 돌려서 결과물 품질 확인.
+- 구현 완료 후 코드 리뷰.
+- 실사용 검증: 실제 우분투 서버(또는 동등 환경)에 `docker compose up`으로 띄우고, Quick Tunnel URL로 모바일 브라우저에서 접속해 주제 생성 → 목차 검토 → 섹션 리서치 → 다운로드 → 삭제까지 전 과정 확인.
+- `docs/setup.md`를 웹앱 배포/사용법 기준으로 재작성.
 - (향후, 별도 설계) 오디오 오버뷰 파이프라인.
-
-## 14. 원격 접속 옵션 (Cloudflare Quick Tunnel, 선택 기능)
-
-**목적**: Claude Code/Codex CLI뿐 아니라 claude.ai 웹의 커스텀 커넥터에서도 이 MCP 서버를 쓸 수 있게, 선택적으로 네트워크에 노출한다. **로컬 stdio 모드가 여전히 기본값**이며, 이 옵션은 명시적으로 켰을 때만 동작한다 — 새로운 기본 동작이 아니다.
-
-### 14.1 왜 Cloudflare "배포"가 아니라 "터널"인가
-
-- 정식 Cloudflare 배포(Workers/Containers)는 인프라 재구성이 필요하다: Workers는 gpt-researcher가 쓰는 torch/sentence-transformers 같은 무거운 네이티브 의존성을 못 돌리고, Containers는 별도 이미지 빌드·운영이 필요하다.
-- Quick Tunnel은 기존 로컬 프로세스를 그대로 둔 채 `cloudflared`가 로컬 포트 ↔ 공개 URL을 중계만 한다 — 인프라 재구성 없이 "웹에서도 붙는다"는 목표를 가장 적은 작업으로 달성한다.
-- 트레이드오프: URL이 임시적(재시작마다 바뀜)이고, 로컬 머신이 켜져 있어야만 접속 가능하다 — 이는 로컬 우선 설계와 일관된다 (비목표: 상시 가동되는 서비스가 아니다).
-
-### 14.2 Transport 전환
-
-- 설치된 `mcp` SDK(FastMCP)가 `FastMCP.run(transport=...)`로 `stdio`/`sse`/`streamable-http`를 지원함을 직접 확인했다.
-- 기본값은 그대로 `stdio` 유지 — 지금처럼 Claude Code `.mcp.json`/Codex `config.toml`은 아무 변경 없이 동작한다.
-- 새 환경변수 `MCP_TRANSPORT`(기본 `stdio`, 원격 모드에서는 `streamable-http`)로 선택한다.
-- `MCP_HOST`(기본 `127.0.0.1`), `MCP_PORT`(기본 `8765`) — **항상 로컬호스트에만 바인딩**한다. 공개 노출은 `cloudflared`가 전담하고, 서버 자체를 LAN에도 열지 않는다.
-
-### 14.3 인증 (필수, 선택 아님)
-
-- `streamable-http` 모드가 켜지면 `MCP_BEARER_TOKEN`이 반드시 설정돼 있어야 하며, 없으면 서버가 기동을 거부한다 (`config.py` 검증에 추가).
-- FastMCP의 `TokenVerifier` 프로토콜(`async def verify_token(self, token: str) -> AccessToken | None`)을 구현해 `Authorization: Bearer <MCP_BEARER_TOKEN>` 헤더를 `secrets.compare_digest`로 상수 시간 비교 검증한다. 전체 OAuth(`AuthSettings`, `issuer_url` 등 필수 필드가 있는 무거운 스펙)는 이번 범위에서 제외 — 정적 토큰 검증만으로 충분하다.
-- 토큰은 `.env`의 `MCP_BEARER_TOKEN=`에 저장한다 (`python -c "import secrets; print(secrets.token_urlsafe(32))"`로 생성 권장).
-- **알려진 함정 (구현 전에 미리 확인함)**: FastMCP는 `host`가 `127.0.0.1`/`localhost`일 때 DNS 리바인딩 방지용 `TransportSecuritySettings`를 자동으로 켜고 `allowed_hosts`를 `127.0.0.1:*`/`localhost:*`로 제한한다. Quick Tunnel을 통해 들어오는 요청은 `Host` 헤더가 `*.trycloudflare.com`이라 이 기본 allowlist에서 거부된다. `streamable-http` 모드에서는 `transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)`로 명시적으로 완화하고, 위 bearer 토큰이 실질적인 접근 통제 수단임을 문서에 명확히 밝힌다.
-
-### 14.4 Cloudflare Quick Tunnel 실행
-
-- 별도 설치: `cloudflared` (Cloudflare 계정/도메인 불필요 — quick tunnel은 익명 사용 가능).
-- 실행: `cloudflared tunnel --url http://127.0.0.1:$MCP_PORT` → 콘솔에 `https://<random>.trycloudflare.com` 출력.
-- 이 URL은 프로세스를 재시작하면 바뀐다 — 문서에 "터널을 계속 켜두거나, 바뀔 때마다 클라이언트 설정을 갱신해야 함"을 명시한다.
-- Docker Compose에 넣지 않는다: SearXNG/Redis와 달리 상시 인프라가 아니라 필요할 때만 켜는 선택 프로세스이므로 별도 실행 스크립트(`scripts/tunnel.sh`)로 분리한다.
-
-### 14.5 클라이언트 연동
-
-- **Claude Code CLI**: 2.1.214의 `claude mcp add --help`로 아래 문법을 실제 확인했다.
-  `claude mcp add --transport http deep-research-remote "$TUNNEL_URL/mcp" --header "Authorization: Bearer $MCP_BEARER_TOKEN"`
-- **claude.ai 웹 (커스텀 커넥터)**: 설정 화면에서 원격 MCP 서버 URL과 인증 헤더/토큰을 등록한다. UI가 OAuth를 강제하는지는 실제 화면에서 확인이 필요하다 — 강제한다면 이번 범위(정적 토큰)로는 부족하므로 별도 후속 작업으로 분리한다.
-- **Codex CLI**: 0.141.0에서 URL 기반 streamable HTTP를 지원함을 실제 config 파서로 확인했다.
-  CLI 등록은 `codex mcp add deep-research-remote --url "$TUNNEL_URL/mcp" --bearer-token-env-var MCP_BEARER_TOKEN`,
-  `~/.codex/config.toml`은 아래 형식이다.
-  ```toml
-  [mcp_servers.deep-research-remote]
-  url = "https://<random>.trycloudflare.com/mcp"
-  bearer_token_env_var = "MCP_BEARER_TOKEN"
-  ```
-
-### 14.6 리스크
-
-- 로컬 프로세스가 실행 중이어야만 원격 접속 가능 (상시 서비스 아님) — 의도된 제약.
-- 토큰 유출 시 DeepSeek API 예산 소비 + 로컬 SearXNG 오남용 가능 — `.env`와 동일한 수준으로 취급하고 커밋 금지 (`.gitignore`에 이미 `.env` 포함).
-- Quick Tunnel은 Cloudflare의 무료/베스트에포트 서비스라 SLA가 없다 — 안정적 상시 접속이 필요해지면 이 설계가 아니라 named tunnel + 정식 배포(1번 질문에서 검토한 Cloudflare Containers 경로)로 넘어가야 한다.
-
-### 14.7 비목표 (유지)
-
-- Cloudflare Workers/Containers로의 정식 배포는 이번 범위 아님.
-- 여러 사용자가 각자 다른 토큰으로 접근하는 다중 사용자 시나리오는 다루지 않음 (단일 공유 토큰, 1인 사용 전제).
