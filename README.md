@@ -10,13 +10,18 @@ SearXNG로 독립 리서치해, 재사용 가능한 섹션 파일과 하나의 �
 Anthropic/OpenAI API 키입니다.
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-cp .env.example .env
+python3.12 -m venv .venv   # Windows에서는 python(또는 py -3.12) -m venv .venv
+.venv/bin/pip install -e '.[dev]'   # Windows: .venv\Scripts\pip install -e ".[dev]"
+cp .env.example .env   # Windows: copy .env.example .env
 # .env에 API 키와 임의의 SEARXNG_SECRET을 설정
 docker compose up -d
 curl 'http://localhost:8080/search?q=test&format=json'
 ```
+
+Windows 공식 Python 설치본은 `python3`/`python3.12`가 아니라 `python`만 등록합니다 —
+`python3`이 없다고 나오면 정상이니, `python --version`으로 3.12.x인지 확인 후
+`python`(또는 여러 버전이 깔려있으면 `py -3.12`)으로 바꿔서 실행하세요. 자세한
+Windows 설치 절차는 [docs/setup.md §2](./docs/setup.md#2-설치)를 참고하세요.
 
 기본 모델은 `deepseek-v4-flash`(빠른 처리·본문 작성)와
 `deepseek-v4-pro`(목차 설계)이며, 두 모델 모두 2026-07-26 실제 API

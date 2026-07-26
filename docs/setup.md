@@ -10,6 +10,8 @@
 
 ## 2. 설치
 
+macOS/Linux (`python3.12`이 없다면 `python3 --version`으로 실제 버전을 먼저 확인하세요):
+
 ```bash
 git clone <this-repo>
 cd researcher
@@ -17,6 +19,19 @@ python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 cp .env.example .env
 ```
+
+Windows (PowerShell/cmd — 공식 설치본은 `python3`가 아니라 `python`만 등록합니다):
+
+```powershell
+git clone <this-repo>
+cd researcher
+python --version   REM 3.12.x가 아니면 아래를 "py -3.12"로 바꿀 것
+python -m venv .venv
+.venv\Scripts\pip install -e ".[dev]"
+copy .env.example .env
+```
+
+이 프로젝트는 `pyproject.toml`에서 Python `>=3.12,<3.13`만 지원합니다 — `python --version`이 3.12.x가 아니면 python.org에서 3.12를 설치한 뒤 `py -3.12 -m venv .venv`처럼 `py` 런처로 버전을 지정하세요.
 
 `.env`를 열어 다음을 채웁니다.
 
