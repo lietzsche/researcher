@@ -21,6 +21,7 @@ class Settings(BaseModel):
     # call is routed elsewhere. Default to a local, keyless provider so a
     # DeepSeek-only (or Anthropic-only) setup doesn't hard-fail on embeddings.
     embedding: str = "huggingface:sentence-transformers/all-MiniLM-L6-v2"
+    output_language: str = "Korean"
     retriever: str = "searxng"
     searxng_url: HttpUrl = HttpUrl("http://localhost:8080")
     site_password: str | None = None
@@ -64,6 +65,10 @@ def load_settings(
         ),
         "embedding": os.getenv(
             "EMBEDDING", Settings.model_fields["embedding"].default
+        ),
+        "output_language": os.getenv(
+            "OUTPUT_LANGUAGE",
+            Settings.model_fields["output_language"].default,
         ),
         # Fixed, not read from os.environ["RETRIEVER"]: _configure_gpt_researcher
         # overwrites that same env var with GPT-Researcher's internal retriever

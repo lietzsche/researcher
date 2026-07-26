@@ -51,6 +51,7 @@ services:
       SMART_LLM: "${SMART_LLM:-deepseek:deepseek-v4-flash}"
       STRATEGIC_LLM: "${STRATEGIC_LLM:-deepseek:deepseek-v4-pro}"
       EMBEDDING: "${EMBEDDING:-huggingface:sentence-transformers/all-MiniLM-L6-v2}"
+      OUTPUT_LANGUAGE: "${OUTPUT_LANGUAGE:-Korean}"
       RETRIEVER: "searxng"
       SEARXNG_URL: "http://searxng:8080"
       RESEARCH_OUTPUT_DIR: "/data/outputs"
