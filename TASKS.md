@@ -189,13 +189,13 @@
 
 > Phase 13 완료 후 실사용 중 발견된 회귀. `app/static/app.js`만 변경, 백엔드/`assemble.py`는 건드리지 않는다.
 
-- [ ] `app/static/app.js`: `enableInPageAnchors(container)` 헬퍼 함수 추가 (DESIGN.md §17.5 코드 그대로) — 컨테이너에 클릭 이벤트 위임, `href="#..."` 링크 클릭 시 `document.getElementById`로 대상이 실제 존재하면 `preventDefault()` + `scrollIntoView({behavior:"smooth", block:"start"})`, 없으면 그대로 두어 기존 라우터가 처리하게 함
-- [ ] `renderDocument(slug)`: `.prose` 렌더링 직후 `enableInPageAnchors(appRoot.querySelector(".prose"))` 호출
-- [ ] `renderSectionDocument(slug, sectionId)`: 동일하게 `enableInPageAnchors` 호출 (현재 섹션 문서엔 내부 앵커가 없어 당장 버그는 아니지만 방어적으로 동일 처리)
-- [ ] 기존 라우트 링크(`← 돌아가기`, `목차와 작업 선택`, `다운로드` 등)는 영향받지 않는지 확인 — 이 링크들은 `href="#/topic/..."` 형태라 `document.getElementById`가 대응하는 엘리먼트를 못 찾으므로 자동으로 기존 라우터 흐름을 타야 함
-- [ ] 실제로 주제 하나를 끝까지 빌드해서(또는 이미 완료된 주제가 있으면 재사용) [전체 문서 보기] 화면에서 목차의 섹션 링크를 클릭 → 홈으로 안 튕기고 해당 섹션으로 스크롤되는지 브라우저(또는 헤드리스 브라우저)로 직접 확인
-- [ ] 위 확인과 별개로 [← 돌아가기]/[목차와 작업 선택]/[다운로드] 링크가 여전히 정상 동작하는지도 같이 확인
-- [ ] 결과를 커밋 메시지에 남기고 push
+- [x] `app/static/app.js`: `enableInPageAnchors(container)` 헬퍼 함수 추가 (DESIGN.md §17.5 코드 그대로) — 컨테이너에 클릭 이벤트 위임, `href="#..."` 링크 클릭 시 `document.getElementById`로 대상이 실제 존재하면 `preventDefault()` + `scrollIntoView({behavior:"smooth", block:"start"})`, 없으면 그대로 두어 기존 라우터가 처리하게 함
+- [x] `renderDocument(slug)`: `.prose` 렌더링 직후 `enableInPageAnchors(appRoot.querySelector(".prose"))` 호출
+- [x] `renderSectionDocument(slug, sectionId)`: 동일하게 `enableInPageAnchors` 호출 (현재 섹션 문서엔 내부 앵커가 없어 당장 버그는 아니지만 방어적으로 동일 처리)
+- [x] 기존 라우트 링크(`← 돌아가기`, `목차와 작업 선택`, `다운로드` 등)는 영향받지 않는지 확인 — 이 링크들은 `href="#/topic/..."` 형태라 `document.getElementById`가 대응하는 엘리먼트를 못 찾으므로 자동으로 기존 라우터 흐름을 타야 함
+- [x] 실제로 주제 하나를 끝까지 빌드해서(또는 이미 완료된 주제가 있으면 재사용) [전체 문서 보기] 화면에서 목차의 섹션 링크를 클릭 → 홈으로 안 튕기고 해당 섹션으로 스크롤되는지 브라우저(또는 헤드리스 브라우저)로 직접 확인
+- [x] 위 확인과 별개로 [← 돌아가기]/[목차와 작업 선택]/[다운로드] 링크가 여전히 정상 동작하는지도 같이 확인
+- [x] 결과를 커밋 메시지에 남기고 push
 
 ---
 

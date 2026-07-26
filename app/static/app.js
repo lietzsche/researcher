@@ -60,6 +60,19 @@ function stopPolling() {
   }
 }
 
+function enableInPageAnchors(container) {
+  container.addEventListener("click", (event) => {
+    const link = event.target.closest('a[href^="#"]');
+    if (!link) return;
+    const targetId = link.getAttribute("href").slice(1);
+    const target = document.getElementById(targetId);
+    if (target) {
+      event.preventDefault();
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  });
+}
+
 function setLoading(label = "불러오는 중…") {
   appRoot.innerHTML = `
     <section class="panel loading-panel">
@@ -426,6 +439,7 @@ async function renderDocument(slug) {
       </div>
       <article class="panel prose">${marked.parse(text)}</article>
     </section>`;
+  enableInPageAnchors(appRoot.querySelector(".prose"));
 }
 
 async function renderSectionDocument(slug, sectionId) {
@@ -441,6 +455,7 @@ async function renderSectionDocument(slug, sectionId) {
       <a class="back-link" href="#/topic/${encodeSlug(slug)}/progress">← 돌아가기</a>
       <article class="panel prose">${marked.parse(text)}</article>
     </section>`;
+  enableInPageAnchors(appRoot.querySelector(".prose"));
 }
 
 async function route() {
