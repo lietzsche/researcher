@@ -395,6 +395,14 @@ textarea {
   gap: 0.85rem;
 }
 
+.research-notice {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+  font-weight: 750;
+}
+
 .toc-item {
   display: grid;
   grid-template-columns: 70px minmax(0, 1fr);
@@ -494,6 +502,12 @@ textarea {
   font-size: 0.8rem;
 }
 
+.status-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
 .status-dot {
   width: 10px;
   height: 10px;
@@ -542,6 +556,89 @@ textarea {
 
 .footer-actions .muted {
   margin-right: auto;
+}
+
+.prose {
+  padding: clamp(1.35rem, 4vw, 2.5rem);
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  margin: 2em 0 0.65em;
+  line-height: 1.25;
+}
+
+.prose h1:first-child,
+.prose h2:first-child,
+.prose h3:first-child {
+  margin-top: 0;
+}
+
+.prose h1 {
+  font-size: clamp(2rem, 6vw, 3.2rem);
+}
+
+.prose h2 {
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 1.65rem;
+}
+
+.prose h3 {
+  font-size: 1.25rem;
+}
+
+.prose p,
+.prose ul,
+.prose ol,
+.prose pre,
+.prose blockquote {
+  margin: 0 0 1.2rem;
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 1.6rem;
+}
+
+.prose li + li {
+  margin-top: 0.35rem;
+}
+
+.prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.prose code {
+  padding: 0.15em 0.35em;
+  border-radius: 5px;
+  background: #e9ece7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.prose pre {
+  padding: 1rem;
+  overflow-x: auto;
+  border-radius: 10px;
+  background: #e9ece7;
+}
+
+.prose pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.prose hr {
+  margin: 2rem 0;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 
 .toast {
@@ -645,6 +742,11 @@ textarea {
 
   .footer-actions .muted {
     margin: 0 0 0.5rem;
+  }
+
+  .status-actions {
+    align-items: flex-end;
+    flex-direction: column;
   }
 
   .card-actions {
