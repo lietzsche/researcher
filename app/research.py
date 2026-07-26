@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections.abc import Callable
@@ -13,6 +14,8 @@ import httpx
 
 from app.config import Settings, load_settings
 from app.storage import OutputStorage
+
+logger = logging.getLogger(__name__)
 
 
 class Researcher(Protocol):
@@ -217,9 +220,27 @@ async def research_section(
         sources = _normalize_sources(researcher.get_research_sources())
         content = _with_sources(content, sources)
         storage.write_text(section_path, content)
-        manifest = storage.update_section(
-            section_id, status="done", source_count=len(sources)
-        )
+        if sources:
+            manifest = storage.update_section(
+                section_id, status="done", source_count=len(sources)
+            )
+        else:
+            # No real research grounds this content -- it is either the
+            # model's bare refusal ("Context: []") or an unsourced
+            # hallucination produced when GPT-Researcher's own search/scrape
+            # step found nothing (see DESIGN.md §22). Either way it isn't a
+            # deep-research chapter, so leave it retry-eligible instead of
+            # marking done: the section stays selectable from the TOC screen
+            # and gets picked up again by a future "전체 리서치 시작".
+            logger.warning(
+                "Research for section %s in topic %r produced no sources; "
+                "marking status=error instead of done so it can be retried",
+                section_id,
+                topic,
+            )
+            manifest = storage.update_section(
+                section_id, status="error", source_count=0
+            )
     except BaseException:
         storage.update_section(section_id, status="error")
         raise

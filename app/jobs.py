@@ -125,7 +125,10 @@ class SerialJobQueue:
     async def _research_one(self, job: ResearchJob, section_id: str) -> None:
         storage = OutputStorage(self.settings.research_output_dir, job.topic)
         try:
-            result = await asyncio.wait_for(
+            # research_section() itself now marks a zero-source completion as
+            # status="error" (and logs why) instead of "done" -- see
+            # DESIGN.md §22 -- so there is nothing left to check here.
+            await asyncio.wait_for(
                 research_section(
                     job.topic,
                     section_id,
@@ -135,13 +138,6 @@ class SerialJobQueue:
                 ),
                 timeout=self.settings.section_timeout_seconds,
             )
-            if len(result.get("sources", [])) == 0:
-                logger.warning(
-                    "Research completed with source_count == 0 for section %s "
-                    "in topic %r; status remains done",
-                    section_id,
-                    job.topic,
-                )
         except BaseException:
             try:
                 storage.update_section(section_id, status="error")

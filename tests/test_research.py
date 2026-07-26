@@ -333,6 +333,84 @@ async def test_research_section_passes_sibling_scope_and_caches(
 
 
 @pytest.mark.asyncio
+async def test_research_section_marks_error_when_no_sources_are_found(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A zero-source completion (LLM refusal or ungrounded hallucination when
+    GPT-Researcher's own search/scrape step found nothing) must not be
+    recorded as "done" -- see DESIGN.md §22. It should stay retry-eligible
+    (status="error") instead of silently corrupting the assembled document.
+    """
+
+    class RefusingResearcher:
+        async def conduct_research(self) -> None:
+            return None
+
+        async def write_report(self, **_kwargs: object) -> str:
+            return "죄송합니다만, 제공된 문맥(Context)이 비어 있습니다. Context: []"
+
+        def get_research_sources(self) -> list[dict[str, str]]:
+            return []
+
+    toc = [
+        {
+            "id": "01",
+            "title": "Target",
+            "description": "Target scope",
+            "subsections": [],
+        }
+    ]
+    storage = OutputStorage(tmp_path, "Empty Context Topic")
+    storage.write_json(storage.toc_json_path, toc)
+    storage.initialize_manifest(depth="standard", sections=toc)
+    settings = Settings(require_api_key=False)
+
+    result = await research_section(
+        "Empty Context Topic",
+        "01",
+        output_root=tmp_path,
+        settings=settings,
+        researcher_factory=lambda **_kwargs: RefusingResearcher(),
+    )
+
+    section = storage.load_manifest()["sections"][0]
+    assert result["sources"] == []
+    assert section["status"] == "error"
+    assert section["source_count"] == 0
+    assert "no sources" in caplog.text
+    assert "section 01" in caplog.text
+    assert "Empty Context Topic" in caplog.text
+
+    # A subsequent attempt must not hit the done-section cache shortcut --
+    # it should call the researcher again for a real retry.
+    retried: list[str] = []
+
+    class RetryResearcher:
+        async def conduct_research(self) -> None:
+            return None
+
+        async def write_report(self, **_kwargs: object) -> str:
+            retried.append("called")
+            return "Real content this time."
+
+        def get_research_sources(self) -> list[dict[str, str]]:
+            return [{"title": "Source", "url": "https://example.com/source"}]
+
+    retry_result = await research_section(
+        "Empty Context Topic",
+        "01",
+        output_root=tmp_path,
+        settings=settings,
+        researcher_factory=lambda **_kwargs: RetryResearcher(),
+    )
+
+    assert retried == ["called"]
+    assert retry_result["cached"] is False
+    assert storage.load_manifest()["sections"][0]["status"] == "done"
+
+
+@pytest.mark.asyncio
 async def test_research_section_cache_uses_manifest_path_after_title_drift(
     tmp_path: Path,
 ) -> None:

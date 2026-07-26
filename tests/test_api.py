@@ -413,42 +413,57 @@ async def test_job_queue_timeout_marks_error_and_processes_next_job(
 
 
 @pytest.mark.asyncio
-async def test_job_queue_warns_for_done_section_without_sources(
+async def test_build_skips_assembly_when_a_section_completes_with_no_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    storage = OutputStorage(tmp_path, "No Sources Topic")
-    sections = [{"id": "01", "title": "Empty Context"}]
+    """A section that "succeeds" with zero sources must still block assembly.
+
+    research_section() now marks such sections status="error" (DESIGN.md
+    §22) instead of "done", so the existing "assemble only if every target
+    is done" rule (§20.5) already covers this case for free -- this test
+    just confirms the build-level wiring still holds for that path.
+    """
+    storage = OutputStorage(tmp_path, "No Sources Build")
+    sections = [
+        {"id": "01", "title": "Has Sources"},
+        {"id": "02", "title": "Empty Context"},
+    ]
     storage.write_json(storage.toc_json_path, sections)
     storage.initialize_manifest(depth="standard", sections=sections)
+    assembled: list[str] = []
 
     async def fake_research(
         topic: str,
         section_id: str,
         **_kwargs: Any,
     ) -> dict[str, Any]:
-        storage.update_section(section_id, status="done", source_count=0)
-        return {"content_markdown": "No context was available.", "sources": []}
+        if section_id == "02":
+            storage.update_section(section_id, status="error", source_count=0)
+            return {"content_markdown": "No context was available.", "sources": []}
+        storage.update_section(section_id, status="done", source_count=3)
+        return {"content_markdown": "Real content.", "sources": [{"url": "https://example.com"}]}
+
+    def fake_assemble(topic: str, **_kwargs: Any) -> dict[str, Any]:
+        assembled.append(topic)
+        return {}
 
     monkeypatch.setattr(jobs_module, "research_section", fake_research)
+    monkeypatch.setattr(jobs_module, "assemble_study_document", fake_assemble)
     queue = SerialJobQueue(
         Settings(require_api_key=False, research_output_dir=tmp_path)
     )
     await queue.start()
     try:
-        await queue.enqueue_section("No Sources Topic", "01")
+        await queue.enqueue_build("No Sources Build")
         await queue.join()
     finally:
         await queue.stop()
 
-    section = storage.load_manifest()["sections"][0]
-    assert section["status"] == "done"
-    assert section["source_count"] == 0
-    assert "source_count == 0" in caplog.text
-    assert "section 01" in caplog.text
-    assert "No Sources Topic" in caplog.text
-    assert "status remains done" in caplog.text
+    assert [
+        section["status"] for section in storage.load_manifest()["sections"]
+    ] == ["done", "error"]
+    assert assembled == []
 
 
 @pytest.mark.asyncio
