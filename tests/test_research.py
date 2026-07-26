@@ -16,6 +16,24 @@ from app.research import (
 from app.storage import OutputStorage
 
 
+def _initialize_research_section(
+    tmp_path: Path,
+    topic: str,
+) -> OutputStorage:
+    toc = [
+        {
+            "id": "01",
+            "title": "Target",
+            "description": "Target scope",
+            "subsections": [],
+        }
+    ]
+    storage = OutputStorage(tmp_path, topic)
+    storage.write_json(storage.toc_json_path, toc)
+    storage.initialize_manifest(depth="standard", sections=toc)
+    return storage
+
+
 def test_config_requires_an_api_key(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -479,6 +497,181 @@ async def test_research_section_marks_error_when_no_sources_are_found(
 
     assert retried == ["called"]
     assert retry_result["cached"] is False
+    assert storage.load_manifest()["sections"][0]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_research_section_without_fallback_propagates_searx_error(
+    tmp_path: Path,
+) -> None:
+    class FailingResearcher:
+        async def conduct_research(self) -> None:
+            raise RuntimeError("SearXNG unavailable")
+
+        async def write_report(self, **_kwargs: object) -> str:
+            pytest.fail("report must not be written after research fails")
+
+        def get_research_sources(self) -> list[dict[str, str]]:
+            return []
+
+    topic = "No Fallback Exception"
+    storage = _initialize_research_section(tmp_path, topic)
+
+    with pytest.raises(RuntimeError, match="SearXNG unavailable"):
+        await research_section(
+            topic,
+            "01",
+            output_root=tmp_path,
+            settings=Settings(require_api_key=False),
+            researcher_factory=lambda **_kwargs: FailingResearcher(),
+        )
+
+    assert storage.load_manifest()["sections"][0]["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_research_section_falls_back_after_searx_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retriever_calls: list[str] = []
+
+    class FailingResearcher:
+        async def conduct_research(self) -> None:
+            raise RuntimeError("SearXNG unavailable")
+
+        async def write_report(self, **_kwargs: object) -> str:
+            pytest.fail("report must not be written after research fails")
+
+        def get_research_sources(self) -> list[dict[str, str]]:
+            return []
+
+    class SuccessfulResearcher:
+        async def conduct_research(self) -> None:
+            return None
+
+        async def write_report(self, **_kwargs: object) -> str:
+            return "Fallback content"
+
+        def get_research_sources(self) -> list[dict[str, str]]:
+            return [{"title": "Source", "url": "https://example.com/fallback"}]
+
+    def factory(**_kwargs: object) -> object:
+        retriever = os.environ["RETRIEVER"]
+        retriever_calls.append(retriever)
+        if retriever == "searx":
+            return FailingResearcher()
+        assert retriever == "tavily"
+        assert os.environ["TAVILY_API_KEY"] == "test-tavily-key"
+        return SuccessfulResearcher()
+
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    topic = "Fallback Success"
+    storage = _initialize_research_section(tmp_path, topic)
+    settings = Settings(
+        require_api_key=False,
+        fallback_retriever="tavily",
+        fallback_retriever_api_key="test-tavily-key",
+    )
+
+    result = await research_section(
+        topic,
+        "01",
+        output_root=tmp_path,
+        settings=settings,
+        researcher_factory=factory,
+    )
+
+    section = storage.load_manifest()["sections"][0]
+    assert retriever_calls == ["searx", "tavily"]
+    assert result["sources"] == [
+        {"title": "Source", "url": "https://example.com/fallback"}
+    ]
+    assert section["status"] == "done"
+    assert section["source_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_research_section_marks_error_when_both_retrievers_are_empty(
+    tmp_path: Path,
+) -> None:
+    retriever_calls: list[str] = []
+
+    class EmptyResearcher:
+        async def conduct_research(self) -> None:
+            return None
+
+        async def write_report(self, **_kwargs: object) -> str:
+            return "Ungrounded content"
+
+        def get_research_sources(self) -> list[dict[str, str]]:
+            return []
+
+    def factory(**_kwargs: object) -> EmptyResearcher:
+        retriever_calls.append(os.environ["RETRIEVER"])
+        return EmptyResearcher()
+
+    topic = "Both Retrievers Empty"
+    storage = _initialize_research_section(tmp_path, topic)
+    settings = Settings(
+        require_api_key=False,
+        fallback_retriever="tavily",
+        fallback_retriever_api_key="test-tavily-key",
+    )
+
+    result = await research_section(
+        topic,
+        "01",
+        output_root=tmp_path,
+        settings=settings,
+        researcher_factory=factory,
+    )
+
+    section = storage.load_manifest()["sections"][0]
+    assert retriever_calls == ["searx", "tavily"]
+    assert result["sources"] == []
+    assert section["status"] == "error"
+    assert section["source_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_research_section_skips_paid_fallback_after_searx_success(
+    tmp_path: Path,
+) -> None:
+    retriever_calls: list[str] = []
+
+    class SuccessfulResearcher:
+        async def conduct_research(self) -> None:
+            return None
+
+        async def write_report(self, **_kwargs: object) -> str:
+            return "SearXNG content"
+
+        def get_research_sources(self) -> list[dict[str, str]]:
+            return [{"title": "Source", "url": "https://example.com/searx"}]
+
+    def factory(**_kwargs: object) -> SuccessfulResearcher:
+        retriever_calls.append(os.environ["RETRIEVER"])
+        return SuccessfulResearcher()
+
+    topic = "No Unnecessary Fallback"
+    storage = _initialize_research_section(tmp_path, topic)
+    settings = Settings(
+        require_api_key=False,
+        fallback_retriever="tavily",
+        fallback_retriever_api_key="test-tavily-key",
+    )
+
+    result = await research_section(
+        topic,
+        "01",
+        output_root=tmp_path,
+        settings=settings,
+        researcher_factory=factory,
+    )
+
+    assert retriever_calls == ["searx"]
+    assert result["sources"]
     assert storage.load_manifest()["sections"][0]["status"] == "done"
 
 
