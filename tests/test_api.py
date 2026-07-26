@@ -240,6 +240,30 @@ def test_get_section_document_only_returns_completed_sections(
     assert client.get(f"/api/topics/{slug}/sections/99").status_code == 404
 
 
+def test_get_section_document_uses_manifest_path_after_title_drift(
+    api_client: tuple[TestClient, FakeQueue, Settings],
+) -> None:
+    client, _, settings = api_client
+    created = client.post(
+        "/api/topics",
+        json={"topic": "Drifted API Topic", "depth": "standard", "num_sections": 2},
+    )
+    slug = created.json()["manifest"]["topic_slug"]
+    storage = OutputStorage(settings.research_output_dir, "Drifted API Topic")
+    manifest = storage.load_manifest()
+    section = manifest["sections"][0]
+    actual_path = storage.topic_dir / section["path"]
+    storage.write_text(actual_path, "# Body under the original filename")
+    section["title"] = "Renamed Metadata Title"
+    section["status"] = "done"
+    storage.save_manifest(manifest)
+
+    response = client.get(f"/api/topics/{slug}/sections/01")
+
+    assert response.status_code == 200
+    assert response.text == "# Body under the original filename\n"
+
+
 def test_basic_auth_protects_api_and_static_frontend(tmp_path: Path) -> None:
     settings = Settings(
         require_api_key=False,

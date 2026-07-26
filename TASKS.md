@@ -218,14 +218,14 @@
 
 > 실사용 중 발견된 이슈: 섹션이 `done`인데 파일을 못 찾아 404가 남 (제목이 재계산 시점에 파일 생성 시점과 달라져 있었음, 정확한 원인은 로그 없이 미확정). 원인이 뭐든 재발을 막는 구조적 수정이 DESIGN.md §19에 있음 — title로 파일명을 재계산하는 대신 `manifest.json`에 이미 저장된 `path` 필드를 쓰도록 세 곳을 고친다.
 
-- [ ] `app/research.py`: `research_section()`의 `section_path = storage.section_path(section_id, section["title"])`(142번 줄)를 `section_path = storage.topic_dir / manifest_section["path"]`로 변경 (DESIGN.md §19.1)
-- [ ] `app/main.py`: `get_section_document`의 `section_path = storage.section_path(section_id, str(section.get("title", "")))`(296번 줄)를 `section_path = storage.topic_dir / str(section.get("path", ""))`로 변경 (DESIGN.md §19.2)
-- [ ] `app/assemble.py`: `assemble_study_document()`의 `section_path = storage.section_path(section_id, section["title"])`(64번 줄)를 이미 조회해둔 `state`(= `manifest_sections[section_id]`)의 `path`를 이용해 `section_path = storage.topic_dir / state["path"]`로 변경, `state`에 `path`가 없는 경우엔 기존 미완료/에러 표시 로직 유지 (DESIGN.md §19.3)
-- [ ] `storage.section_path()`/`section_filename()` 자체는 삭제하지 말 것 — `initialize_manifest()`가 최초 1회 계산할 때 여전히 필요함 (DESIGN.md §19.4)
-- [ ] `tests/test_research.py`/`test_assemble.py`/`test_api.py`에 회귀 테스트 추가: manifest의 `title`을 일부러 실제 파일명과 다르게 설정해둔 상황(이번에 실사용 중 겪은 상황 재현)에서도 `research_section`의 캐시 조회, `get_section_document`, `assemble_study_document`가 `path` 필드 기준으로 파일을 정상적으로 찾는지 확인 (DESIGN.md §19.5)
-- [ ] 위 회귀 테스트를 통해 "title이 파일 생성 후 바뀌어도 조회는 깨지지 않는다"는 게 실제로 확인되는지 최종 점검
-- [ ] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마
-- [ ] 논리 단위로 커밋 나눠서 push까지
+- [x] `app/research.py`: `research_section()`의 `section_path = storage.section_path(section_id, section["title"])`(142번 줄)를 `section_path = storage.topic_dir / manifest_section["path"]`로 변경 (DESIGN.md §19.1)
+- [x] `app/main.py`: `get_section_document`의 `section_path = storage.section_path(section_id, str(section.get("title", "")))`(296번 줄)를 `section_path = storage.topic_dir / str(section.get("path", ""))`로 변경 (DESIGN.md §19.2)
+- [x] `app/assemble.py`: `assemble_study_document()`의 `section_path = storage.section_path(section_id, section["title"])`(64번 줄)를 이미 조회해둔 `state`(= `manifest_sections[section_id]`)의 `path`를 이용해 `section_path = storage.topic_dir / state["path"]`로 변경, `state`에 `path`가 없는 경우엔 기존 미완료/에러 표시 로직 유지 (DESIGN.md §19.3)
+- [x] `storage.section_path()`/`section_filename()` 자체는 삭제하지 말 것 — `initialize_manifest()`가 최초 1회 계산할 때 여전히 필요함 (DESIGN.md §19.4)
+- [x] `tests/test_research.py`/`test_assemble.py`/`test_api.py`에 회귀 테스트 추가: manifest의 `title`을 일부러 실제 파일명과 다르게 설정해둔 상황(이번에 실사용 중 겪은 상황 재현)에서도 `research_section`의 캐시 조회, `get_section_document`, `assemble_study_document`가 `path` 필드 기준으로 파일을 정상적으로 찾는지 확인 (DESIGN.md §19.5)
+- [x] 위 회귀 테스트를 통해 "title이 파일 생성 후 바뀌어도 조회는 깨지지 않는다"는 게 실제로 확인되는지 최종 점검
+- [x] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마
+- [x] 논리 단위로 커밋 나눠서 push까지
 
 ---
 

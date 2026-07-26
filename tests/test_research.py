@@ -228,6 +228,48 @@ async def test_research_section_passes_sibling_scope_and_caches(
 
 
 @pytest.mark.asyncio
+async def test_research_section_cache_uses_manifest_path_after_title_drift(
+    tmp_path: Path,
+) -> None:
+    original_toc = [
+        {
+            "id": "01",
+            "title": "Original File Title",
+            "description": "Original scope",
+            "subsections": [],
+        }
+    ]
+    storage = OutputStorage(tmp_path, "Path Cache Topic")
+    storage.write_json(storage.toc_json_path, original_toc)
+    manifest = storage.initialize_manifest(depth="standard", sections=original_toc)
+    actual_path = storage.topic_dir / manifest["sections"][0]["path"]
+    storage.write_text(actual_path, "# Cached body from the original path")
+
+    drifted_toc = [
+        {
+            **original_toc[0],
+            "title": "Renamed Metadata Title",
+        }
+    ]
+    storage.write_json(storage.toc_json_path, drifted_toc)
+    manifest["sections"][0]["title"] = "Renamed Metadata Title"
+    manifest["sections"][0]["status"] = "done"
+    storage.save_manifest(manifest)
+
+    result = await research_section(
+        "Path Cache Topic",
+        "01",
+        output_root=tmp_path,
+        settings=Settings(require_api_key=False),
+        researcher_factory=lambda **_kwargs: pytest.fail("cache was not used"),
+    )
+
+    assert result["cached"] is True
+    assert result["content_markdown"] == "# Cached body from the original path\n"
+    assert Path(result["section_path"]) == actual_path
+
+
+@pytest.mark.asyncio
 async def test_research_section_includes_output_language_in_custom_prompt(
     tmp_path: Path,
 ) -> None:
