@@ -217,6 +217,7 @@ def create_app(
         slug: str,
         section_id: str,
         request: Request,
+        force: bool = False,
     ) -> dict[str, str]:
         storage = _topic_storage(_settings(request), slug)
         manifest = storage.load_manifest()
@@ -228,7 +229,12 @@ def create_app(
             raise HTTPException(status_code=404, detail="Section not found")
         if section.get("status") == "in_progress":
             raise HTTPException(status_code=409, detail="Section is already in progress")
-        await _queue(request).enqueue_section(storage.topic, section_id)
+        if section.get("status") == "done" and not force:
+            raise HTTPException(
+                status_code=409,
+                detail="Section is already researched; pass force=true to re-run",
+            )
+        await _queue(request).enqueue_section(storage.topic, section_id, force=force)
         return {"status": "queued"}
 
     @application.post(

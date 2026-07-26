@@ -189,6 +189,30 @@ def test_api_reports_not_found_and_conflict(
     )
 
 
+def test_research_section_rejects_redo_of_done_section_without_force(
+    api_client: tuple[TestClient, FakeQueue, Settings],
+) -> None:
+    client, queue, settings = api_client
+    created = client.post(
+        "/api/topics",
+        json={"topic": "Done Section Topic", "depth": "standard", "num_sections": 2},
+    )
+    slug = created.json()["manifest"]["topic_slug"]
+    storage = OutputStorage(settings.research_output_dir, "Done Section Topic")
+    storage.update_section("01", status="done")
+
+    # Without force: rejected, and no job is queued -- clicking an already
+    # "done" section must not silently re-spend API budget on a full redo.
+    rejected = client.post(f"/api/topics/{slug}/sections/01/research")
+    assert rejected.status_code == 409
+    assert queue.section_jobs == []
+
+    # With force=true: allowed, and the queue receives the force flag.
+    forced = client.post(f"/api/topics/{slug}/sections/01/research?force=true")
+    assert forced.status_code == 202
+    assert queue.section_jobs == [("Done Section Topic", "01", True)]
+
+
 def test_basic_auth_protects_api_and_static_frontend(tmp_path: Path) -> None:
     settings = Settings(
         require_api_key=False,

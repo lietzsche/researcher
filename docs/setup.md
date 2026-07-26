@@ -1,5 +1,103 @@
-# 사용법
+# 사용법 (Setup & Usage)
 
-이 프로젝트는 FastAPI 기반 개인 웹앱으로 전환되었습니다. 배포 및 사용 문서는
-구현 검토 후 갱신될 예정이며, 현재 아키텍처와 동작 계약은
-[DESIGN.md](../DESIGN.md)를 참고하세요.
+개인 우분투 서버에 Docker Compose로 띄우고 Cloudflare Quick Tunnel로 접속하는 개인용 학습 리서치 웹앱입니다. 아키텍처와 설계 근거는 [DESIGN.md](../DESIGN.md)를 참고하세요.
+
+## 1. 요구 사항
+
+- Docker / Docker Compose
+- LLM API 키 하나: **DeepSeek(기본, 비용 이유)**, 또는 Anthropic, 또는 OpenAI
+- (원격 접속용) `cloudflared` — 별도 설치 불필요, `docker-compose.yml`의 `cloudflared` 서비스가 컨테이너로 함께 뜸
+
+## 2. 설치 및 기동
+
+```bash
+git clone <this-repo>
+cd researcher
+cp .env.example .env
+```
+
+`.env`를 열어 다음을 채웁니다.
+
+- `DEEPSEEK_API_KEY` (기본 프로바이더). Anthropic/OpenAI로 바꾸려면 `.env.example`의 대체 옵션 블록을 참고해 키와 `FAST_LLM`/`SMART_LLM`/`STRATEGIC_LLM` 세 값을 함께 바꾸세요.
+- **`SITE_PASSWORD`**: 반드시 강력한 값으로 채우세요. 비워두면 앱이 인증 없이 뜨고 시작 로그에 경고를 남깁니다 — Quick Tunnel로 공개되는 순간 누구나 접근/삭제/DeepSeek 예산 소비가 가능해집니다. 생성 예시:
+  ```bash
+  python3 -c "import secrets; print(secrets.token_urlsafe(24))"
+  ```
+- `SEARXNG_SECRET`은 임의의 문자열로 채워도 되지만, 현재 SearXNG 이미지는 이 값을 실제로 사용하지 않습니다 (§6 "알려진 이슈" 참고) — 컨테이너 내부 네트워크에만 존재해 보안상 문제는 없습니다.
+
+전체 스택(Redis, SearXNG, 앱, Cloudflare Quick Tunnel)을 한 번에 띄웁니다.
+
+```bash
+scripts/up.sh
+```
+
+서비스가 모두 healthy해질 때까지 기다린 뒤, 현재 세션의 Quick Tunnel URL(`https://<임의문자열>.trycloudflare.com`)을 출력합니다. 이 URL이 앱 접속 주소입니다 — 브라우저(PC/모바일 아무거나)로 열면 `SITE_PASSWORD`를 요구하는 기본 인증 팝업이 뜹니다 (사용자명은 아무거나 무시되고, 비밀번호만 검증됩니다. 실제로는 `researcher`를 사용자명으로 둡니다).
+
+```bash
+scripts/down.sh
+```
+
+로 전체 스택을 내립니다. 이후 다시 `scripts/up.sh`를 실행하면 **Quick Tunnel URL이 바뀝니다** — 매번 새로 확인해야 합니다. URL만 다시 확인하고 싶으면:
+
+```bash
+scripts/get-tunnel-url.sh
+```
+
+## 3. 웹 UI 사용법
+
+1. **홈**: 저장된 주제 카드 목록. 진행률(N/M 섹션), 생성일이 보이고, 완료된 주제는 "다운로드" 버튼이 나타납니다. "삭제"는 언제든 가능(리서치 진행 중인 주제 제외).
+2. **새 주제 만들기**: 주제 텍스트와 깊이(standard=6섹션/deep=10섹션)를 입력하고 제출하면 목차만 먼저 생성됩니다 — **본문 리서치는 아직 시작되지 않습니다.**
+3. **목차 화면**: 생성된 목차를 검토합니다. 여기서 두 가지를 고를 수 있습니다.
+   - "**전체 리서치 시작**" — 남은 모든 섹션을 순서대로 리서치하고 최종 문서를 조립합니다.
+   - 섹션별 "**이 섹션만 리서치**" — 원하는 섹션만 골라 진행합니다. 이미 완료된 섹션은 버튼이 비활성화됩니다.
+4. **진행 화면**: 섹션별 상태(대기/진행 중/완료/오류)와 출처 개수를 보여주고, 몇 초 간격으로 자동 갱신됩니다. 브라우저 탭을 닫아도 서버는 계속 진행하니, 나중에 다시 열어 확인하면 됩니다. 전체 문서가 조립되면 "전체 문서 보기"/"다운로드" 버튼이 나타납니다.
+
+## 4. REST API
+
+웹 UI 없이 직접 호출할 수도 있습니다 (모두 `SITE_PASSWORD`가 설정돼 있으면 HTTP Basic Auth 필요, 사용자명 `researcher` + 비밀번호).
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| `POST` | `/api/topics` | `{topic, depth, num_sections?}` → 목차 생성 (본문 리서치는 시작 안 함) |
+| `GET` | `/api/topics` | 저장된 주제 목록 요약 |
+| `GET` | `/api/topics/{slug}` | 목차 + 섹션별 상태 상세 |
+| `POST` | `/api/topics/{slug}/sections/{section_id}/research?force=false` | 섹션 하나 리서치 시작 (202, 백그라운드). 이미 완료된 섹션은 `force=true` 없이는 409로 거부됩니다. |
+| `POST` | `/api/topics/{slug}/build` | `{sections_filter?, force_regenerate?}` → 미완료 섹션 전체 리서치 + 조립 (202, 백그라운드) |
+| `GET` | `/api/topics/{slug}/document` | 조립된 문서 본문 (markdown) |
+| `GET` | `/api/topics/{slug}/download` | 조립된 문서를 파일로 다운로드 |
+| `DELETE` | `/api/topics/{slug}` | 주제 전체 삭제 (리서치 진행 중이면 409) |
+
+리서치 트리거(`.../research`, `.../build`)는 즉시 202를 반환하고, 실제 작업은 서버 내부의 **직렬(동시 1개)** 백그라운드 큐에서 처리됩니다 — 여러 개를 동시에 눌러도 순서대로만 실행됩니다.
+
+## 5. 결과물 구조
+
+```
+outputs/<topic-slug>/
+  manifest.json       # 섹션별 상태(pending/in_progress/done/error), 소스 개수 — API의 진행 상황 소스
+  toc.md / toc.json    # 목차
+  sections/*.md        # 섹션별 심화 리서치 결과 + 출처
+  study_document.md     # 전체를 이어붙인 최종 학습 문서
+```
+
+`docker-compose.yml`이 `outputs/`를 호스트 디렉터리에 바인드 마운트하므로, `docker compose down` 후 다시 올려도 데이터가 남습니다. 완전히 지우려면 웹 UI/API의 삭제 기능을 쓰거나 `outputs/<slug>/` 디렉터리를 직접 지우세요.
+
+## 6. 알려진 이슈 / 주의사항
+
+- **`gpt-researcher` 버전 고정 필요**: 최신 배포판인 0.16.0에는 `gpt_researcher/actions/query_processing.py`에 `typing` import 순서 버그가 있어(`Any`/`List`를 함수 시그니처에서 사용한 뒤에야 `from typing import ...`가 실행됨), 이 버전이 설치되면 리서치 관련 기능이 `import gpt_researcher` 시점에 `NameError`로 즉시 실패합니다. `pyproject.toml`에 `gpt-researcher>=0.14.0,<0.16.0`로 상한을 고정해 이 회귀를 피하도록 해뒀습니다 — 업스트림에서 수정되기 전까지는 이 핀을 유지하세요.
+- **`SEARXNG_SECRET`은 현재 아무 효과가 없습니다**: `docker-compose.yml`이 이 환경변수를 컨테이너에 전달하지만, SearXNG 이미지의 엔트리포인트 스크립트는 이 변수를 전혀 읽지 않습니다. 실제 `secret_key`는 `searxng/settings.yml`에 하드코딩된 값 그대로 사용됩니다. SearXNG는 컨테이너 네트워크 안에서만 존재하고 호스트/외부에 노출되지 않으므로 보안 위험은 아닙니다.
+- **검색 실패 시 조용히 빈 섹션이 만들어질 수 있음**: SearXNG가 모든 쿼리에 대해 빈 결과를 반환하면(차단/레이트리밋 등), GPT-Researcher는 오류를 던지는 대신 "소스를 찾지 못했다"는 안내 문구를 리포트 본문으로 반환합니다. 이 경우도 정상 `done` 상태로 저장됩니다 — 결과물 품질이 이상하다면 해당 섹션의 `manifest.json`(또는 진행 화면의 출처 개수)에서 `source_count`가 0인지 확인하세요.
+- **Quick Tunnel은 상시 서비스가 아닙니다**: Cloudflare의 무료/베스트에포트 기능이라 SLA가 없고, URL이 재시작마다 바뀝니다. 서버(정확히는 `cloudflared` 컨테이너)가 켜져 있는 동안만 접속됩니다.
+- **서버 다운타임 중 작업 손실**: 섹션이 `in_progress` 상태에서 컨테이너가 죽으면 재시작 후에도 자동으로 재시도되지 않습니다 — 진행 화면에서 해당 섹션을 다시 트리거하세요.
+
+## 7. 로컬 개발 (Docker 없이)
+
+앱 코드만 빠르게 반복 작업하고 싶다면:
+
+```bash
+python3.12 -m venv .venv   # Windows: python 또는 py -3.12
+.venv/bin/pip install -e '.[dev]'
+docker compose up -d redis searxng   # SearXNG/Redis만 컨테이너로
+SEARXNG_URL=http://localhost:8080 .venv/bin/uvicorn app.main:app --reload
+```
+
+이 경로에서는 `RESEARCH_OUTPUT_DIR`이 기본값(`./outputs`, 저장소 루트 기준)을 쓰므로 `.env`의 `/data/outputs` 값을 로컬 개발 시에는 오버라이드해야 할 수 있습니다.
