@@ -227,6 +227,50 @@
 - [x] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마
 - [x] 논리 단위로 커밋 나눠서 push까지
 
+## Phase 17 — 실사용 중 발견된 5건 (DESIGN.md §20)
+
+> 실사용 중 보고된 다섯 가지: (1) "전체 리서치 시작" 후 홈으로 와도 무한로딩, (2) 서버 로그 페이지 필요, (3) 섹션 상세에서 바로 다음/이전 섹션 이동, (4) 다운로드 시 엑셀 옵션, (5) 섹션 리서치 병렬화. 각 항목의 원인 분석과 설계 근거는 DESIGN.md §20.1~§20.5에 상세히 있으니 반드시 먼저 읽을 것 — 특히 §20.1은 코드로 확인한 사실과 "가장 유력한 추정"을 구분해서 적어뒀다.
+
+### 17.1 무한로딩 원인 대응 (DESIGN.md §20.1)
+- [ ] `app/research.py`: `_configure_gpt_researcher()` 안에서 `gpt_researcher.retrievers.searx.searx` 모듈의 `requests.get`을 `functools.partial`로 `timeout=settings.request_timeout_seconds`가 기본 적용되도록 몽키패치. 모듈 전역 플래그로 idempotent하게 가드(여러 번 호출돼도 중복 패치 안 되게).
+- [ ] `app/config.py`: `Settings`에 `section_timeout_seconds: float = 900`(env `SECTION_TIMEOUT_SECONDS`, 1~3600 검증) 추가.
+- [ ] `app/jobs.py`: `_research_one()`의 `research_section(...)` 호출을 `asyncio.wait_for(..., timeout=settings.section_timeout_seconds)`로 감싸기. 타임아웃 시 `storage.update_section(section_id, status="error")` 후 계속 진행(큐 전체를 막지 않음).
+- [ ] `app/static/app.js`: 공용 `api()` 헬퍼에 `AbortController` 기반 타임아웃(20초) 추가, 타임아웃 시 명확한 에러 토스트 표시.
+- [ ] 회귀 테스트: SearXNG 몽키패치가 `requests.get`에 타임아웃을 실제로 주입하는지, 반복 호출해도 한 번만 패치되는지 확인. `asyncio.wait_for` 타임아웃 시 섹션이 `error`로 남고 나머지 큐 처리가 계속되는지 확인(fake researcher factory로 인위적 지연 재현).
+- [ ] `.env.example`에 `SECTION_TIMEOUT_SECONDS` 추가.
+
+### 17.2 서버 로그 페이지 (DESIGN.md §20.2)
+- [ ] `app/logs.py` 신규: `InMemoryLogHandler(logging.Handler)`가 `collections.deque(maxlen=1000)`에 `{id, timestamp, level, logger, message}` 저장, `id`는 단조 증가.
+- [ ] `create_app()`의 lifespan에서 루트 로거에 이 핸들러 부착.
+- [ ] `GET /api/logs?after_id=0&limit=200` 엔드포인트 추가 — `after_id`보다 큰 로그만 오름차순 반환. 인증은 기존 미들웨어가 전체 라우트에 이미 적용되니 별도 처리 불필요.
+- [ ] `app/static/app.js`: `#/logs` 라우트 추가, 홈 히어로에 "서버 로그" 링크 추가. 3~5초 폴링, 레벨별 색상 표시(error/warning 강조).
+- [ ] 테스트: 로그 핸들러가 로그를 쌓는지, `/api/logs?after_id=`가 커서 이후 것만 반환하는지, `maxlen` 초과 시 오래된 것부터 버려지는지.
+
+### 17.3 섹션 상세 → 바로 다음/이전 섹션 (DESIGN.md §20.3)
+- [ ] `app/static/app.js`의 `renderSectionDocument(slug, sectionId)` 수정: 섹션 본문 fetch와 별도로 `GET /api/topics/{slug}`를 호출해 `toc` 순서 + `manifest.sections` 상태를 얻는다. 현재 섹션 인덱스를 찾아 이전/다음 section id 계산, 이웃 섹션이 `status === "done"`일 때만 링크 활성화.
+- [ ] 페이지에 "← 이전 섹션 / 다음 섹션 →" 버튼 추가(기존 "← 돌아가기"는 유지).
+- [ ] 백엔드 변경 없음 — 새 API 만들지 말 것 (기존 두 엔드포인트로 충분).
+
+### 17.4 다운로드 엑셀 옵션 (DESIGN.md §20.4)
+- [ ] `pyproject.toml`에 `openpyxl` 의존성 추가.
+- [ ] `app/export.py` 신규: `build_excel_workbook(topic, storage) -> BytesIO` — 시트 "목차"(id/제목/설명), "본문"(id/제목/본문 텍스트, wrap), "출처"(id/제목/URL, 기존 `_SOURCE_LINK` 정규식과 동일 패턴으로 섹션 파일에서 추출).
+- [ ] `app/main.py`의 `download_document`에 `format: Literal["markdown", "excel"] = "markdown"` 쿼리 파라미터 추가(기본값 유지, 하위 호환). `excel`이면 워크북을 BytesIO로 만들어 올바른 Content-Type/filename으로 응답.
+- [ ] `app/static/app.js`: 다운로드 링크가 있는 세 곳(홈 카드, 진행 화면, 문서 화면) 모두 "다운로드 (MD)"/"다운로드 (Excel)" 두 링크로 분리.
+- [ ] 테스트: `format=excel` 응답이 유효한 xlsx인지(openpyxl로 다시 읽어 시트/셀 값 검증), `format` 생략/`markdown` 시 기존 동작 그대로인지.
+
+### 17.5 섹션 리서치 병렬화 (DESIGN.md §20.5)
+- [ ] `app/config.py`에 `max_concurrent_research: int = 2`(env `MAX_CONCURRENT_RESEARCH`, 1~5 검증) 추가.
+- [ ] `app/jobs.py`의 `_run_build()`를 순차 `for` 루프 대신 `asyncio.Semaphore(settings.max_concurrent_research)`로 동시 실행 수를 제한한 `asyncio.gather(..., return_exceptions=True)`로 변경. 하나가 실패해도 나머지는 계속 진행(취소하지 않음).
+- [ ] 조립 조건 변경: 모든 섹션이 끝난 뒤 매니페스트를 다시 읽어 대상 섹션 전부가 `done`일 때만 `assemble_study_document` 호출, 하나라도 `error`면 조립 건너뛰고 로그에 남김.
+- [ ] 개별 "이 섹션만 리서치" 트리거는 건드리지 말 것 — 이번 병렬화는 build 전용.
+- [ ] 회귀 테스트: 여러 섹션을 동시에(가짜 지연이 있는 fake researcher factory로) 빌드했을 때 매니페스트 상태가 서로 덮어쓰지 않고 전부 정확히 반영되는지, 동시 실행 수가 `max_concurrent_research`를 넘지 않는지(세마포어로 카운팅), 일부 실패 시 조립이 스킵되는지, 전부 성공 시 조립되는지.
+- [ ] `.env.example`에 `MAX_CONCURRENT_RESEARCH` 추가.
+
+### 공통
+- [ ] `docs/setup.md`에 새 환경변수(`SECTION_TIMEOUT_SECONDS`, `MAX_CONCURRENT_RESEARCH`), 로그 페이지 사용법, 엑셀 다운로드 옵션, 섹션 상세 다음/이전 이동 안내 추가.
+- [ ] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마.
+- [ ] 논리 단위로 커밋 나눠서 push까지.
+
 ---
 
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)

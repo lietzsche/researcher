@@ -451,6 +451,67 @@ codex가 헷갈리지 않도록 명시적으로 나열한다.
 - 이 수정은 "title이 달라져도 파일을 못 찾는" 증상을 근본적으로 없애지만, **애초에 title이 왜 달라졌는지는 여전히 미상이다.** 재발하면 이번엔 `docker compose logs app`을 꼭 확보해서 실제 원인을 밝힐 것.
 - `manifest.json`의 `path` 필드 자체가 손상되거나 없는 경우(예: 아주 오래된 manifest, 수동 편집으로 필드가 지워진 경우)엔 여전히 못 찾는다 — `path`가 유일한 정답 소스이니 당연한 한계.
 
+## 20. 실사용 중 발견된 5건 (Phase 17 구현 대상)
+
+실제 배포 환경에서 사용하다 보고된 다섯 가지 요청/버그. 아래 순서대로 단계적으로 검토했다.
+
+### 20.1 "전체 리서치 시작" 후 홈으로 와도 무한로딩
+
+**증상**: 목차 화면에서 "전체 리서치 시작"을 누르고 리서치가 진행되는 동안 홈으로 돌아오면 로딩 스피너가 끝나지 않는다.
+
+**소스 코드로 확인한 사실**: `gpt-researcher`(설치된 버전, `.venv/lib/python3.12/site-packages/gpt_researcher/retrievers/searx/searx.py`)의 `SearxSearch.search()`는 `requests.get(search_url, params=params, headers=...)`을 호출하는데, **타임아웃 인자가 전혀 없다.** 이 호출 자체는 `gpt_researcher/skills/researcher.py`의 `_search_relevant_source_urls()`에서 `await asyncio.to_thread(retriever.search, ...)`로 감싸져 있어 이벤트 루프 자체를 막지는 않지만, SearXNG가 느려지거나(상위 검색엔진 하나가 응답 없이 멈추는 경우 등) 아예 응답을 안 주면 그 스레드가 영원히 멈춘다.
+
+**가장 유력한 연쇄 메커니즘 (추정, 100% 확진은 아님)**: 섹션 하나를 리서치할 때 GPT-Researcher는 여러 서브쿼리 각각에 대해 이런 SearXNG 호출을 동시에 스레드로 실행한다. 이 호출들은 파이썬 프로세스 전체가 공유하는 `asyncio.to_thread`의 기본 스레드풀(크기 `min(32, cpu수+4)`)을 쓰는데, 개인 서버처럼 CPU 코어가 적으면 풀 자체가 작다. 타임아웃 없는 호출 여러 개가 동시에 멈추면 이 풀이 통째로 고갈되고, 이후 임베딩(`EMBEDDING=huggingface:...`, 이것도 `to_thread`로 실행됨) 등 같은 프로세스의 다른 스레드 오프로드 작업도 줄줄이 밀리면서 컨테이너 전체 체감 응답성이 나빠진다 — "홈으로 가도 무한로딩"과 정확히 들어맞는 증상이다. 다만 이건 코드 근거로 가장 유력한 가설이지 실제 서버 로그로 확진된 건 아니다 — §20.1.4의 워치독/로그(§20.2)로 재발 시 확인 가능하게 해둔다.
+
+**동반 문제**: `app/static/app.js`의 공용 `api()` 헬퍼에 타임아웃이 전혀 없다. 서버가 실제로 멈추면 브라우저 `fetch`도 영원히 응답을 기다리고, 로딩 스피너는 절대 사라지지 않는다. 근본 원인을 고쳐도 이 방어막이 없으면 다른 원인의 지연도 항상 "무한로딩"처럼 보인다.
+
+**수정 (셋 다 적용)**:
+1. **SearXNG 요청 타임아웃 강제** — `gpt_researcher.retrievers.searx.searx` 모듈의 `requests.get`을 앱 시작 시 한 번, `functools.partial`로 `timeout=settings.request_timeout_seconds`가 기본 적용되도록 몽키패치한다 (`app/research.py`의 `_configure_gpt_researcher()` 안에서 idempotent하게 — 이미 패치됐으면 다시 안 하도록 모듈 전역 플래그로 가드). 서드파티 패키지의 실제 결함(타임아웃 누락)을 우리 경계에서 최소 범위로 보정하는 것이지, 리트리버 로직 자체를 재구현하는 게 아니다.
+2. **섹션 단위 워치독** — `app/config.py`에 `section_timeout_seconds: float = 900`(env `SECTION_TIMEOUT_SECONDS`, 기본 15분) 추가. `app/jobs.py`의 `_research_one()`에서 `research_section(...)` 호출을 `asyncio.wait_for(..., timeout=settings.section_timeout_seconds)`로 감싼다. 타임아웃 시 해당 섹션만 `status="error"`로 남기고 큐/빌드는 계속 진행 — 아직 밝혀지지 않은 다른 원인의 행(hang)에 대해서도 전체가 영구히 멈추는 걸 막는 안전망.
+3. **프론트엔드 fetch 타임아웃** — `app/static/app.js`의 `api()`에 `AbortController` 기반 타임아웃(예: 20초)을 추가. 타임아웃 시 명확한 에러 토스트("서버 응답이 지연되고 있습니다. 잠시 후 다시 시도하세요.")를 띄운다 — 최소한 "멈춘 건지 그냥 로딩 중인지" 사용자가 구분할 수 있게 한다. `renderToc`/`renderProgress`의 폴링 fetch에도 동일하게 적용된다(공용 헬퍼라 자동 적용).
+
+### 20.2 서버 로그 보는 페이지
+
+지금은 `docker compose logs -f app`으로만 볼 수 있다. 웹 UI 안에서 최근 로그를 볼 수 있게 한다.
+
+- `app/logs.py`(신규): `logging.Handler`를 상속한 `InMemoryLogHandler`가 `collections.deque(maxlen=1000)`에 `{id, timestamp, level, logger, message}` 형태로 로그를 쌓는다. `id`는 단조 증가 정수(폴링 커서용).
+- `create_app()`의 lifespan에서 루트 로거에 이 핸들러를 부착 — 앱 코드(`app.*`)와 백그라운드 큐(`app.jobs`)뿐 아니라 `uvicorn.error`쪽 로그도 같이 잡혀 원인 조사에 쓸모 있게 한다.
+- `GET /api/logs?after_id=&limit=200` — `after_id`보다 큰 `id`의 로그만 오름차순으로 반환 (진행 화면과 동일한 폴링 패턴, 이미 본 로그를 중복으로 안 받게).
+- 프론트: 새 라우트 `#/logs`. 홈 히어로 영역에 "서버 로그" 링크 추가. 3~5초 폴링으로 새 로그를 이어붙이고, 레벨별로 색을 다르게(error=빨강, warning=주황 등) 표시. 로그는 재시작 시 사라져도 무방(개인용, `docker compose logs`가 이미 영구 기록 역할을 함 — §11.3).
+
+### 20.3 섹션 상세에서 바로 다음/이전 섹션으로 이동
+
+지금은 섹션 문서 화면(`#/topic/{slug}/section/{id}`)에 "← 돌아가기"(진행 화면)만 있어서, 다음 섹션을 보려면 진행 화면으로 돌아갔다가 다시 들어가야 한다.
+
+- 백엔드 변경 없음 — 이미 있는 `GET /api/topics/{slug}`(TOC 순서 + 섹션별 상태)와 `GET /api/topics/{slug}/sections/{id}`(본문)만으로 충분하다.
+- `app/static/app.js`의 `renderSectionDocument(slug, sectionId)`를 수정: 섹션 본문을 가져오는 것과 별도로 `GET /api/topics/{slug}`를 호출해 `toc` 순서와 `manifest.sections` 상태를 얻는다. 현재 섹션의 인덱스를 찾아 이전/다음 section id를 계산하고, 그 이웃 섹션이 `status === "done"`일 때만 링크를 활성화한다(아니면 비활성화 버튼으로 표시 — 미완료 섹션 문서는 애초에 조회 대상이 아니므로).
+- "← 이전 섹션 / 다음 섹션 →" 버튼을 페이지 상단(또는 하단)에 추가. 기존 "← 돌아가기"(진행 화면행)는 유지.
+
+### 20.4 다운로드 옵션: 마크다운 외 엑셀
+
+- 의존성 추가: `openpyxl` (표 하나 만드는 데 `pandas` 전체는 과함).
+- `app/export.py`(신규): `build_excel_workbook(topic: str, storage: OutputStorage) -> BytesIO`.
+  - 시트 "목차": 섹션 id / 제목 / 설명.
+  - 시트 "본문": 섹션 id / 제목 / 본문(섹션 `.md` 파일 원문 텍스트, 셀 줄바꿈 wrap 적용) — 한 행에 섹션 하나.
+  - 시트 "출처": 섹션 id / 출처 제목 / URL (기존 `app/research.py`의 `_SOURCE_LINK` 정규식과 동일한 패턴으로 각 섹션 파일에서 추출).
+- `GET /api/topics/{slug}/download`에 `format: Literal["markdown", "excel"] = "markdown"` 쿼리 파라미터 추가 (기본값 유지로 하위 호환). `format=excel`이면 워크북을 메모리(BytesIO)에 만들어 `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `filename={slug}.xlsx`로 응답.
+- 프론트: 다운로드 링크가 있는 세 곳(홈 카드, 진행 화면, 문서 화면) 모두 "다운로드 (MD)" / "다운로드 (Excel)" 두 개 링크로 분리한다 — 드롭다운 없이 기존의 단순 `<a>` 스타일을 유지.
+
+### 20.5 섹션 리서치 병렬화
+
+**질문**: 지금 "전체 리서치 시작"은 목차 순서대로 섹션을 하나씩 직렬로 처리한다(`app/jobs.py`의 `_run_build()`). 별다른 이유가 없다면 병렬로 돌려도 되지 않나?
+
+**과거에 직렬화한 진짜 이유는 이미 해소되어 있다**: `app/research.py`의 `_configure_gpt_researcher()`가 매 섹션 리서치 시작 시 `os.environ`(`RETRIEVER`, `SEARX_URL`, `FAST_LLM` 등)을 덮어쓰는데, 예전엔 이게 진짜 경쟁 상태를 만드는 버그였다(§10에 기록된 과거 `RETRIEVER` 이름 충돌 버그). 하지만 지금 그 함수가 설정하는 값들은 전부 하나의 공유 `Settings` 인스턴스에서 나온 **상수**라서, 두 섹션이 동시에 같은 값을 다시 써도 실질적인 경쟁이 없다 — 즉 직렬화를 강제했던 근거는 이미 코드 레벨에서 사라졌다.
+
+**병렬로 돌려도 `manifest.json` 갱신이 안전한 이유**: 이 앱은 uvicorn을 `--workers` 없이 단일 프로세스·단일 이벤트 루프로 띄운다. `storage.update_section()`/`load_manifest()`/`save_manifest()`는 내부에 `await`가 전혀 없는 순수 동기 함수다 — 파이썬 코루틴은 `await` 지점에서만 다른 코루틴에 제어를 양보하므로, 여러 섹션의 리서치 코루틴이 asyncio로 "동시에" 진행되더라도(진짜 멀티스레드가 아니라 협력적 스케줄링) `manifest.json`의 읽기→수정→쓰기 구간은 서로 끼어들 수 없다. 그래서 새로운 락 없이도 안전하다 — 단, `update_section` 계열 함수에 앞으로 `await`를 추가한다면 이 가정이 깨지니 주의.
+
+**구현**:
+- `app/config.py`에 `max_concurrent_research: int = 2`(env `MAX_CONCURRENT_RESEARCH`, 1~5로 검증) 추가.
+- `app/jobs.py`의 `_run_build()`를 순차 `for` 루프 대신, `asyncio.Semaphore(settings.max_concurrent_research)`로 동시 실행 수를 제한한 `asyncio.gather(..., return_exceptions=True)`로 바꾼다. 각 섹션은 서로 독립적인 리서치이므로 하나가 실패해도 나머지를 취소하지 않는다.
+- 조립(`assemble_study_document`) 실행 조건 변경: 기존엔 첫 실패 시 나머지를 `pending`으로 되돌리고 즉시 중단했지만, 병렬 실행에서는 "나머지"가 이미 실행 중이므로 그 개념이 성립하지 않는다. 대신 **모든 섹션이 끝난 뒤 매니페스트를 다시 읽어, 대상 섹션 전부가 `done`일 때만 조립하고, 하나라도 `error`면 조립을 건너뛰고 로그(§20.2)에 남긴다.**
+- 범위를 "전체 리서치 시작"(build)에만 한정한다 — 개별 "이 섹션만 리서치" 트리거는 기존 큐 동작(한 번에 하나) 그대로 유지해 변경 범위를 좁힌다.
+- 리스크: 자체 호스팅 SearXNG/DeepSeek에 대한 동시 요청 부하가 늘어난다 — 그래서 기본값을 2로 보수적으로 잡고 환경변수로 조절 가능하게 한다(1로 설정하면 기존과 동일한 완전 직렬 동작).
+
 ---
 
 ## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
@@ -460,4 +521,5 @@ codex가 헷갈리지 않도록 명시적으로 나열한다.
 - `docs/setup.md`를 웹앱 배포/사용법 기준으로 재작성.
 - Phase 15(§18) 완료 후: 코드 리뷰, 실제 DeepSeek+SearXNG로 한글 주제를 리서치해 섹션 본문(서술)이 한글로 나오는지 실사용 검증 (출처 URL/제목은 원문 언어 그대로가 정상), `docs/setup.md`에 언어 설정 안내 추가.
 - Phase 16(§19) 완료 후: 코드 리뷰, manifest의 title을 실제 파일명과 일부러 다르게 설정한 상황을 재현해 `research_section`/`get_section_document`/`assemble_study_document`가 여전히 파일을 찾는지 검증.
+- Phase 17(§20) 완료 후: 코드 리뷰. 특히 (1) SearXNG 타임아웃 몽키패치가 idempotent하게 한 번만 적용되는지, (2) 병렬 빌드에서 매니페스트 갱신이 실제로 안전한지(§20.5 가정 재검증), (3) 엑셀 다운로드 파일이 실제로 열리는지, (4) 로그 페이지가 실제 로그를 보여주는지 실사용 검증.
 - (향후, 별도 설계) 오디오 오버뷰 파이프라인.
