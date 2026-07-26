@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from app.config import Settings, load_settings
+from app.jobs import SerialJobQueue
 from app.schemas import GenerateTocInput
 from app.storage import OutputStorage
 from app.toc import generate_toc
@@ -134,12 +135,11 @@ def create_app(
                 "SITE_PASSWORD is not set; the web application is running "
                 "without authentication"
             )
-        if job_queue is not None:
-            application.state.job_queue = job_queue
-            await job_queue.start()
+        queue_instance = job_queue or SerialJobQueue(application.state.settings)
+        application.state.job_queue = queue_instance
+        await queue_instance.start()
         yield
-        if job_queue is not None:
-            await job_queue.stop()
+        await queue_instance.stop()
 
     application = FastAPI(title="Deep Research", lifespan=lifespan)
 
