@@ -325,6 +325,47 @@ codex가 헷갈리지 않도록 명시적으로 나열한다.
 - 빌드 툴체인 없는 순수 HTML/CSS/바닐라 JS 원칙(§9) 유지 — CDN 스크립트 태그 하나로 해결.
 - §17.2의 `renderSectionDocument`도 동일한 `.prose` 스타일과 marked.js 렌더러 사용.
 
+### 17.5 전체 문서 보기에서 목차 앵커 클릭 시 홈으로 튕기는 문제 (§17.4의 회귀)
+
+**현상**: [전체 문서 보기](`#/topic/{slug}/document`)에서 렌더링된 문서 상단 "목차"의 링크(`01. 제목` 등)를 클릭하면 문서 내 해당 섹션으로 스크롤되는 대신 홈 화면(`#/`)으로 돌아간다. 실사용(모바일) 중 발견.
+
+**원인 (재현 확인 완료)**: `app/assemble.py`가 조립하는 문서는 다음 앵커 구조를 갖는다.
+
+```
+## 목차
+- [01. 제목](#section-01)
+...
+<a id="section-01"></a>
+## 01. 제목
+```
+
+§17.4에서 `renderDocument()`가 이 마크다운을 `marked.parse()`로 HTML 변환해 그대로 렌더링하므로, 위 목차 링크는 실제 `<a href="#section-01">`로 존재한다. 그런데 앱 전체가 `window.location.hash` 기반 SPA 라우터(`window.addEventListener("hashchange", route)`)를 쓰고 있어서, 이 링크를 클릭해 브라우저가 `location.hash`를 `#section-01`로 바꾸는 순간 `hashchange`가 발생하고 `route()`가 끼어든다. `route()`의 파싱(`hash.replace(/^#\/?/, "").split("/").filter(Boolean)`)은 `"#section-01"` → `["section-01"]`이 되는데, 이는 `parts[0] === "new"`도 `"topic"`도 아니므로 마지막 `else { window.location.hash = "#/"; }`에 걸려 **홈으로 강제 이동**한다 — 브라우저 네이티브 "같은 페이지 내 앵커로 스크롤" 동작이 라우터에 가로채여 실행되지 못하는 것이다. (`node -e`로 파싱 결과 직접 확인함.) `assemble.py`나 백엔드 쪽 문제가 아니라 순수 프론트엔드(`app.js`) 문제다.
+
+**수정 명세 (`app/static/app.js`만 변경, 백엔드/`assemble.py` 변경 없음)**:
+- 새 헬퍼 함수 추가:
+  ```js
+  function enableInPageAnchors(container) {
+    container.addEventListener("click", (event) => {
+      const link = event.target.closest('a[href^="#"]');
+      if (!link) return;
+      const targetId = link.getAttribute("href").slice(1);
+      const target = document.getElementById(targetId);
+      if (target) {
+        event.preventDefault();
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      // target이 없으면(=앱 라우트로 의도된 링크) 그대로 두어 기존
+      // hashchange → route() 흐름을 타게 한다.
+    });
+  }
+  ```
+- `renderDocument(slug)`에서 `.prose` 엘리먼트를 렌더링한 직후 `enableInPageAnchors(appRoot.querySelector(".prose"))` 호출.
+- `renderSectionDocument(slug, sectionId)`에도 동일하게 호출 (현재 섹션 파일엔 내부 앵커가 없어 지금 당장 버그는 없지만, 마크다운 렌더링 경로를 §17.4와 공유하므로 방어적으로 동일 처리).
+- 이벤트 위임(container에 리스너 하나) 방식이라 `marked.parse()`가 만들어내는 링크 개수와 무관하게 동작한다. `document.getElementById`로 대상이 실제로 존재할 때만 `preventDefault()` + `scrollIntoView()`하고, 없으면 기존 라우터 흐름을 그대로 타게 둬서 다른 정상 라우트 링크(`← 돌아가기` 등, 이미 앱 라우트 경로라 `href`가 `#/topic/...`형태이며 `getElementById`가 못 찾음)에는 영향이 없다.
+- `window.location.hash` 자체를 바꾸지 않으므로 `hashchange`/`route()`가 아예 발동하지 않는다 — 뒤로가기 버튼 동작에도 영향 없음 (히스토리 엔트리를 추가/변경하지 않음).
+
+**회귀 테스트 없음(JS 유닛 테스트 인프라가 없음)** — 실사용 검증(§16)에서 실제 브라우저로 목차 앵커 클릭 시 스크롤되는지, 그리고 다른 앱 라우트 링크(홈으로, 목차와 작업 선택 등)는 여전히 정상 동작하는지 확인 필요.
+
 ---
 
 ## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)

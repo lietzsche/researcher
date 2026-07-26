@@ -185,6 +185,18 @@
 - [x] §13.2의 `renderSectionDocument` 도 `.prose` 스타일과 `marked.parse()` 사용
 - [x] `tests/test_api.py`: §13.2에서 추가한 섹션 엔드포인트 테스트 추가 (done 섹션 → 200, pending/없음 → 404)
 
+## Phase 14 — 전체 문서 보기 앵커 클릭 시 홈으로 튕기는 버그 수정 (DESIGN.md §17.5)
+
+> Phase 13 완료 후 실사용 중 발견된 회귀. `app/static/app.js`만 변경, 백엔드/`assemble.py`는 건드리지 않는다.
+
+- [ ] `app/static/app.js`: `enableInPageAnchors(container)` 헬퍼 함수 추가 (DESIGN.md §17.5 코드 그대로) — 컨테이너에 클릭 이벤트 위임, `href="#..."` 링크 클릭 시 `document.getElementById`로 대상이 실제 존재하면 `preventDefault()` + `scrollIntoView({behavior:"smooth", block:"start"})`, 없으면 그대로 두어 기존 라우터가 처리하게 함
+- [ ] `renderDocument(slug)`: `.prose` 렌더링 직후 `enableInPageAnchors(appRoot.querySelector(".prose"))` 호출
+- [ ] `renderSectionDocument(slug, sectionId)`: 동일하게 `enableInPageAnchors` 호출 (현재 섹션 문서엔 내부 앵커가 없어 당장 버그는 아니지만 방어적으로 동일 처리)
+- [ ] 기존 라우트 링크(`← 돌아가기`, `목차와 작업 선택`, `다운로드` 등)는 영향받지 않는지 확인 — 이 링크들은 `href="#/topic/..."` 형태라 `document.getElementById`가 대응하는 엘리먼트를 못 찾으므로 자동으로 기존 라우터 흐름을 타야 함
+- [ ] 실제로 주제 하나를 끝까지 빌드해서(또는 이미 완료된 주제가 있으면 재사용) [전체 문서 보기] 화면에서 목차의 섹션 링크를 클릭 → 홈으로 안 튕기고 해당 섹션으로 스크롤되는지 브라우저(또는 헤드리스 브라우저)로 직접 확인
+- [ ] 위 확인과 별개로 [← 돌아가기]/[목차와 작업 선택]/[다운로드] 링크가 여전히 정상 동작하는지도 같이 확인
+- [ ] 결과를 커밋 메시지에 남기고 push
+
 ---
 
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
@@ -193,4 +205,5 @@
 - [x] `docs/setup.md` 사용법 문서 작성
 - [x] Phase 11 완료 후: 코드 리뷰 완료 (설계대로 구현됨, 추가 버그 없음). 로컬 stdio 모드 회귀 없음 확인 (`.env`에 원격 변수 미설정 시 `mcp_transport="stdio"`, `token_verifier=None` 그대로). streamable-http 서버를 직접 띄워 `curl`로 무인증/오답 토큰(401), 정답 토큰(200), 터널 Host 헤더를 흉내낸 요청(200)까지 독립적으로 재검증 완료. claude.ai 웹 커스텀 커넥터는 브라우저 UI 라이브 검증까지는 못함 — docs/setup.md 7.3에 미검증임을 명시. `docs/setup.md`에 "7. 원격 접속 (선택)" 섹션 작성, README.md의 stdio-only 문구도 갱신.
 - [x] Phase 12 완료 후: 코드 리뷰 — `POST /sections/{id}/research`가 이미 `done`인 섹션도 `force` 없이 그대로 재큐잉하던 버그 발견·수정 (build 엔드포인트는 이미 done 섹션을 걸러내는데 단일 섹션 엔드포인트만 그 보호가 빠져있었음; 프론트엔드가 완료된 섹션 버튼을 비활성화해서 일반 사용 흐름에선 안 걸리지만 API를 직접 호출하면 불필요한 재과금이 발생할 수 있었음 — 회귀 테스트 추가). `docker compose up -d --build`로 전체 스택(redis/searxng/app/cloudflared) 실기동 확인 후 실제 Quick Tunnel URL로 무인증(401)/오답 비밀번호(401)/정상 비밀번호(200) 확인, 이어서 실제 DeepSeek 호출로 주제 생성("소크라테스의 산파술")→섹션 리서치(중복 요청 409, 완료 후 재요청 409, force=true 허용 확인)→전체 빌드→다운로드(한글 파일명 인코딩 정상)→삭제→404 확인까지 curl로 전 과정 실행. `docs/setup.md`를 웹앱 배포/사용법 기준으로 재작성, README.md도 웹앱 퀵스타트로 갱신.
+- [ ] Phase 14 완료 후: 코드 리뷰, 실제 브라우저에서 목차 앵커 클릭 시 스크롤 동작 확인, 다른 라우트 링크 회귀 없는지 확인
 - [ ] (향후, 별도 설계) 오디오 오버뷰 파이프라인 설계
