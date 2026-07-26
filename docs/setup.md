@@ -52,6 +52,30 @@ scripts/redeploy.sh
 
 `app` 이미지만 다시 빌드하고 `app` 컨테이너만 재생성합니다. `redis`/`searxng`/`cloudflared`는 건드리지 않으므로 **Quick Tunnel URL이 바뀌지 않습니다**. `Dockerfile`이 의존성 설치(torch 포함) 레이어를 애플리케이션 코드 복사보다 앞에 두고 있어서, 코드만 바뀐 경우엔 이 무거운 설치 단계가 캐시로 재사용되고 몇 초 내에 끝납니다.
 
+### SearXNG가 차단당할 때 유료 리트리버로 폴백하기 (선택)
+
+서버 로그 페이지에 `source_count=0`인 검색 실패 경고가 반복된다면, SearXNG 시도가 예외를 내거나 출처를 하나도 찾지 못했을 때 유료 검색 API로 한 번 더 자동 재시도하도록 설정할 수 있습니다.
+
+지원하는 리트리버 이름과 서비스 페이지는 다음과 같습니다.
+
+- `tavily`: [Tavily](https://www.tavily.com/)
+- `serper`: [Serper](https://serper.dev/)
+- `serpapi`: [SerpApi](https://serpapi.com/)
+- `searchapi`: [SearchApi](https://www.searchapi.io/)
+- `bing`: [Azure Bing Search API](https://learn.microsoft.com/en-us/lifecycle/announcements/bing-search-api-retirement) — Microsoft가 2025년 8월 11일 서비스를 완전히 종료해 신규 가입이나 신규 키 발급은 불가능합니다. GPT-Researcher 호환 리트리버 이름을 보존하기 위해 설정 목록에는 남아 있지만 현재 새로 선택할 수 있는 서비스는 아닙니다.
+- `exa`: [Exa](https://exa.ai/)
+
+각 서비스의 무료 크레딧과 가격은 수시로 바뀌므로 위 가입 페이지의 최신 가격 정책을 직접 확인하세요.
+
+이 프로젝트는 기본적으로 관리할 비밀과 과금 대상이 DeepSeek API 키 하나뿐이지만, 이 옵션은 그 원칙의 명시적인 선택적 예외입니다. 활성화하면 두 번째 유료 API 키를 관리해야 합니다. 유료 리트리버는 SearXNG가 계속 실패할 때만 호출되므로 정상적인 검색 중에는 추가 과금이 없지만, 대량 차단 상황에서는 여러 섹션이 폴백을 사용해 비용이 빠르게 늘 수 있습니다.
+
+선택한 서비스에서 키를 발급받은 뒤 `.env`에 다음 두 값을 추가하고 앱을 재배포합니다.
+
+```dotenv
+FALLBACK_RETRIEVER=tavily
+FALLBACK_RETRIEVER_API_KEY=<발급받은 키>
+```
+
 ## 3. 웹 UI 사용법
 
 1. **홈**: 저장된 주제 카드 목록. 진행률(N/M 섹션), 생성일이 보이고, 완료된 주제는 Markdown/Excel/섹션별 ZIP 다운로드 버튼이 나타납니다. 목차 생성 중이거나 실패한 주제는 진행률 대신 상태 배지가 표시됩니다. "삭제"는 언제든 가능(목차 생성 또는 리서치 진행 중인 주제 제외). 히어로의 **서버 로그**에서 최근 1,000개 로그를 확인할 수 있고, 화면은 4초마다 새 로그를 가져옵니다.

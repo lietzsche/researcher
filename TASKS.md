@@ -354,22 +354,22 @@
 
 > DESIGN.md §24를 먼저 전체 읽고 시작할 것. 폴백 미설정 상태(기존 기본값)에서는 동작이 절대 바뀌면 안 된다 — 이 회귀 보장이 이번 작업에서 가장 중요하다.
 
-- [ ] `app/config.py`:
+- [x] `app/config.py`:
   - 모듈 상단에 `FALLBACK_RETRIEVER_API_KEY_ENV: dict[str, str]` 추가 (§24.3의 6개 리트리버 → env var 이름 매핑).
   - `Settings`에 `fallback_retriever: str | None = None`, `fallback_retriever_api_key: str | None = None` 추가.
   - `validate_provider_and_retriever`에 검증 추가: `fallback_retriever`가 `FALLBACK_RETRIEVER_API_KEY_ENV`에 없는 이름이면 `ValueError`, `fallback_retriever`는 있는데 `fallback_retriever_api_key`가 없으면 `ValueError`.
   - `load_settings()`에 `FALLBACK_RETRIEVER`/`FALLBACK_RETRIEVER_API_KEY` 환경변수 로딩 추가(둘 다 미설정 시 `None`, 즉 기존 동작 그대로).
-- [ ] `app/research.py`:
+- [x] `app/research.py`:
   - `_configure_gpt_researcher(settings, *, retriever: str = "searx")`로 시그니처 변경, `os.environ["RETRIEVER"] = retriever`로 교체. `retriever != "searx"`이면 `app.config.FALLBACK_RETRIEVER_API_KEY_ENV[retriever]`로 알아낸 env var에 `settings.fallback_retriever_api_key`를 설정.
   - `research_section()` 안의 "팩토리 생성 → conduct_research → write_report → 소스 정규화" 로직을 내부 헬퍼(예: `_attempt(retriever_name)`)로 추출(순수 리팩터링, 동작 변화 없음).
   - §24.4의 순서대로 재구성: `_attempt("searx")` 시도 → 예외 시 폴백 미설정이면 그대로 raise, 설정돼 있으면 `logger.warning` 후 `sources=[]`로 취급 → `sources`가 비어있고 폴백이 설정돼 있으면 `logger.warning` 후 `_attempt(settings.fallback_retriever)` 시도 → 그래도 비어 있으면 §22 그대로 `status="error", source_count=0`.
   - **반드시 확인**: `fallback_retriever` 미설정 상태에서는 예외 전파/빈 결과 처리 경로가 이전 코드와 100% 동일해야 함.
-- [ ] `docs/setup.md`: "SearXNG가 차단당할 때 유료 리트리버로 폴백하기 (선택)" 절 추가 — §24.5 내용 그대로(지원 리트리버 6개와 가입 링크, 과금 경고, `.env` 설정 예시). 가입 링크는 실제로 접속 가능한지 확인.
-- [ ] `.env.example`: §24.5의 주석 처리된 예시 블록 추가.
-- [ ] 테스트(§24.6 그대로):
+- [x] `docs/setup.md`: "SearXNG가 차단당할 때 유료 리트리버로 폴백하기 (선택)" 절 추가 — §24.5 내용 그대로(지원 리트리버 6개와 가입 링크, 과금 경고, `.env` 설정 예시). 가입 링크는 실제로 접속 가능한지 확인.
+- [x] `.env.example`: §24.5의 주석 처리된 예시 블록 추가.
+- [x] 테스트(§24.6 그대로):
   - `app/config.py` 검증 테스트(미설정 통과/잘못된 이름 거부/키 누락 거부/정상 조합 통과).
   - `app/research.py`: 폴백 미설정 시 예외 전파·빈 결과 처리 회귀 테스트, 폴백 설정 시 "1차 예외 → 2차 성공", "1차 빈 결과 → 2차도 빈 결과", "1차 성공 시 2차 미호출"까지 전부 가짜 팩토리로 검증. 두 번째 시도 시 `os.environ["RETRIEVER"]`가 실제로 바뀌었는지도 확인.
-- [ ] 논리 단위로 커밋 나눠서 push까지.
+- [x] 논리 단위로 커밋 나눠서 push까지.
 
 ---
 
