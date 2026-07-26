@@ -390,6 +390,31 @@
 
 ---
 
+## Phase 23 — 자동 폴백 대신 검색 리트리버를 직접 선택 (DESIGN.md §26, §24 대체)
+
+> DESIGN.md §26을 먼저 전체 읽고 시작할 것. 이건 §24(Phase 21)에서 만든 "SearXNG 실패 시 유료 리트리버로 자동 폴백" 메커니즘을 **완전히 대체(제거)**하는 작업이다 — 새 기능 추가가 아니라 기존 코드 상당 부분을 걷어내고 더 단순한 구조로 바꾸는 작업이니 주의해서 진행해. §25(Phase 22, 봇 차단 진단 로그)는 그대로 유지하되 조건만 바뀐다.
+
+- [ ] `app/config.py`:
+  - `FALLBACK_RETRIEVER_API_KEY_ENV` → `PAID_RETRIEVER_API_KEY_ENV`로 이름 변경(내용 동일, 5개: tavily/serper/serpapi/searchapi/exa).
+  - `Settings`에서 `fallback_retriever`/`fallback_retriever_api_key` 필드 삭제, 대신 `retriever_api_key: str | None = None` 필드 추가.
+  - `validate_provider_and_retriever`: `retriever.lower()`가 `{"searxng"} | PAID_RETRIEVER_API_KEY_ENV.keys()`에 없으면 `ValueError`, 유료 리트리버인데 `retriever_api_key`가 없으면 `ValueError` (DESIGN.md §26.2에 정확한 문구 있음).
+  - `load_settings()`: `retriever = os.getenv("RETRIEVER", "searxng")`로 **실제로 환경변수를 읽도록** 바꾸고(기존의 "절대 환경변수에서 안 읽는다"는 하드코딩과 그 이유 주석 제거), `retriever_api_key`는 `PAID_RETRIEVER_API_KEY_ENV`에 있는 이름이면 매핑된 env var를 읽어서 채운다.
+- [ ] `app/research.py` (핵심 작업):
+  - `_temporary_env(overrides: dict[str, str])` 컨텍스트 매니저 추가 — 진입 시 주어진 env var들을 저장 후 덮어쓰고, 종료 시 원래 값으로 복원(원래 없던 키는 삭제). DESIGN.md §26.2에 정확한 구현 있음.
+  - `_configure_gpt_researcher(settings: Settings) -> None`을 단일 인자로 되돌린다. `RETRIEVER`와 유료 API 키 설정 로직을 이 함수에서 제거(SearXNG 타임아웃 몽키패치/`SEARX_URL`/LLM 3종/`EMBEDDING`/`DEEPSEEK_API_KEY` 설정만 남김).
+  - `research_section()`에서 §24의 `_attempt()` 이중 시도 구조(searx 1차 → 폴백 2차)를 제거하고, DESIGN.md §26.2에 있는 단일 시도 구조로 교체: `_temporary_env`로 `RETRIEVER`(+필요시 유료 API 키)를 임시 설정한 채로 리서처를 한 번만 실행. 실패(예외 또는 빈 결과) 시 **`gpt_researcher_retriever == "searx"`일 때만** `_diagnose_searxng_failure()`를 호출해 로그를 남긴다. 예외는 그대로 재raise(기존 §22의 최종 상태 처리 로직은 변경 없음).
+  - `_diagnose_searxng_failure()` 함수 자체는 손대지 마(§25 그대로) — 호출 조건만 위처럼 바뀐다.
+- [ ] `docker-compose.yml`: `app` 서비스의 `RETRIEVER: "searxng"`(하드코딩된 문자열)를 `RETRIEVER: "${RETRIEVER:-searxng}"`로 바꾸고, `TAVILY_API_KEY`/`SERPER_API_KEY`/`SERPAPI_API_KEY`/`SEARCHAPI_API_KEY`/`EXA_API_KEY`를 각각 `"${VAR:-}"` 형식으로 통과시키는 항목을 추가한다. **이걸 빼먹으면 코드를 고쳐도 실제 Docker 배포에서는 여전히 SearXNG로 고정된다.**
+- [ ] `docs/setup.md`: §24에서 추가한 "SearXNG가 차단당할 때 유료 리트리버로 폴백하기" 절을 "검색 리트리버 선택하기"로 다시 쓴다(`RETRIEVER`를 유료 리트리버로 바꾸고 해당 서비스 API 키를 직접 설정하는 방식으로 안내, 가입 링크/과금 경고는 재사용). 로그 페이지 설명에 "봇 차단 진단은 `RETRIEVER=searxng`일 때만 남는다"는 점 한 줄 추가.
+- [ ] `.env.example`: `FALLBACK_RETRIEVER=`/`FALLBACK_RETRIEVER_API_KEY=` 블록을 지우고 `RETRIEVER=searxng` 아래에 유료 리트리버 전환 예시(`# RETRIEVER=tavily`, `# TAVILY_API_KEY=`)로 교체.
+- [ ] 테스트 (DESIGN.md §26.3 그대로):
+  - `app/config.py`: 필드명 바뀐 것 반영해 §24 테스트들을 그대로 재사용(기본값 통과, 미지원 이름 거부, 키 누락 거부, 정상 조합 통과).
+  - `app/research.py`: **환경변수 복원 회귀 테스트(가장 중요)** — `research_section()` 호출 전후로 `os.environ.get("RETRIEVER")`가 정확히 복원되는지, 연속 `load_settings()` 호출이 오염되지 않는지. `RETRIEVER=tavily` 설정 시 팩토리 호출 시점에 `os.environ["RETRIEVER"]`/`TAVILY_API_KEY`가 올바른지. `RETRIEVER=tavily`로 실패해도 `_diagnose_searxng_failure`가 호출 안 되는지(SearXNG에 아무 요청도 없었음을 `respx`로 확인). `RETRIEVER=searxng`(기본)로 실패하면 기존처럼 진단이 호출되는지.
+  - §24 전용이었던 "1차 예외+2차 폴백 성공", "1차/2차 모두 빈 결과", "1차 성공 시 2차 미호출" 테스트는 그 메커니즘이 삭제되므로 함께 삭제.
+- [ ] 논리 단위로 커밋 나눠서 push까지.
+
+---
+
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
 - [x] 구현 코드 리뷰 — 발견한 4건(전부 심각도 높음)을 직접 수정: `gpt-researcher` 0.16.0 import 버그 → 버전 상한 고정, DeepSeek-only 설정에서 임베딩 때문에 죽는 문제 → `EMBEDDING` 기본값 추가, `RETRIEVER` 환경변수 충돌로 2섹션 이상 `build_study_document`가 항상 실패하던 버그 → 수정, 한글 주제가 해시 폴더명으로 뭉개지던 `slugify` 버그 → 수정. 낮은 우선순위 2건(SearXNG 빈 검색 결과 조용히 통과, `SEARXNG_SECRET` 무효)은 DESIGN.md/docs/setup.md에 기록만 하고 미수정.
 - [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.

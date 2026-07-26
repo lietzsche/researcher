@@ -773,6 +773,95 @@ SearXNG의 `/search?format=json` 응답은 `results` 외에 `unresponsive_engine
 
 ---
 
+## 26. 자동 폴백 대신 검색 리트리버를 직접 선택 (§24 대체, Phase 23 구현 대상)
+
+### 26.1 배경 — §24를 왜 되돌리는가
+
+사용자 피드백: §24(Phase 21)에서 만든 "SearXNG가 실패하면 유료 리트리버로 자동 재시도"하는 방식이 아니라, **애초에 검색할 때 어떤 리트리버를 쓸지 옵션으로 직접 고를 수 있으면 좋겠다**는 요청. 즉 "실패 시 전환"이 아니라 "처음부터 선택"으로 모델을 바꾼다.
+
+- §24의 자동 폴백 메커니즘(`app/config.py`의 `fallback_retriever`/`fallback_retriever_api_key`, `app/research.py`의 SearXNG 1차 시도 → 실패 시 폴백 2차 시도 로직)은 **이번 설계로 완전히 대체되어 제거된다**. §24/§25 절 자체는 그 시점의 설계 기록으로 그대로 남겨두되(과거 기록 보존 원칙, DESIGN.md 앞부분 다른 절들과 동일한 관례), 코드는 이 절의 내용으로 대체된다.
+- §25(Phase 22)의 "SearXNG 실패 시 봇 차단 여부 진단 로그"는 **그대로 유지**한다 — 사용자가 이번 요청에서 명시적으로 "오류일 때 봇차단으로 막혔는지 여부는 오류 로그로 보여주고"라고 재확인함. 다만 이제 SearXNG가 항상 쓰이는 게 아니라 사용자가 고른 리트리버 중 하나일 뿐이므로, **이 진단은 실제로 사용 중인 리트리버가 SearXNG일 때만 의미가 있고 그때만 실행되도록 조건을 건다** (유료 리트리버가 실패했을 때 SearXNG를 대신 조회해 "봇 차단"을 진단하는 건 지금 실패한 검색과 무관한 엉뚱한 정보라 오히려 혼란만 준다).
+
+### 26.2 설계
+
+`app/config.py`:
+- `Settings.retriever: str = "searxng"` 필드는 그대로 두되, 이제 정말로 사용자가 바꿀 수 있는 값이 된다. 허용 값: `"searxng"` 또는 §24에서 이미 검증해둔 5개 유료 리트리버(`tavily`, `serper`, `serpapi`, `searchapi`, `exa` — bing은 §24 리뷰에서 확인한 대로 계속 제외).
+- `FALLBACK_RETRIEVER_API_KEY_ENV`를 `PAID_RETRIEVER_API_KEY_ENV`로 이름을 바꾼다(내용은 동일한 5개 매핑). `fallback_retriever`/`fallback_retriever_api_key` 필드는 삭제하고, 대신 `retriever_api_key: str | None = None` 필드 하나를 새로 추가한다 — `retriever`가 유료 리트리버 중 하나면 그 서비스의 API 키 값을 담는다.
+- `validate_provider_and_retriever`(기존 model_validator)를 수정: `retriever.lower()`가 `{"searxng"} | PAID_RETRIEVER_API_KEY_ENV.keys()`에 없으면 `ValueError`(허용 목록 포함). `retriever.lower() != "searxng"`인데 `retriever_api_key`가 없으면 `ValueError`("RETRIEVER=<이름>를 쓰려면 <해당 서비스 API 키 env var>도 설정해야 합니다" 형식).
+- `load_settings()`: `retriever = os.getenv("RETRIEVER", "searxng")`로 실제 환경변수를 읽는다(§24 이전 코드에 있던 "RETRIEVER는 절대 환경변수에서 안 읽는다"는 하드코딩과 그 이유였던 주석을 제거 — 이제 §26.3의 env 복원 방식으로 그 문제 자체가 해결되므로 안전하게 읽어도 된다). `retriever_api_key`는 `retriever.lower()`가 `PAID_RETRIEVER_API_KEY_ENV`에 있으면 그 매핑된 env var(예: `TAVILY_API_KEY`)를 읽고, 아니면 `None`.
+
+`app/research.py` — **이 부분이 핵심이며, 왜 지금까지 `RETRIEVER`를 환경변수에서 못 읽었는지의 진짜 원인도 같이 고친다**:
+- 기존 `_configure_gpt_researcher(settings, *, retriever: str = "searx")`는 `os.environ["RETRIEVER"]`를 직접, 영구적으로 덮어쓰고 다시 복원하지 않는다. GPT-Researcher가 기대하는 내부 이름("searx" 등)과 우리 공개 이름("searxng")이 다르기 때문에, 이 값이 프로세스에 남아있으면 **같은 프로세스 안에서 나중에 실행되는 `load_settings()` 호출이 오염된 값을 읽게 된다** — 지금까지 `retriever` 필드를 아예 환경변수에서 안 읽고 `"searxng"`으로 하드코딩해 이 문제를 회피해왔던 바로 그 이유다(기존 코드 주석에 명시돼 있었음). 이제 `retriever`를 진짜로 사용자가 바꿀 수 있게 만들려면 이 오염 자체를 근본적으로 막아야 한다.
+- 해결책: 리트리버 관련 환경변수(`RETRIEVER`, 그리고 유료 리트리버일 때의 API 키 env var)를 **연구 한 번 실행하는 동안만 임시로 설정했다가, 끝나면 원래 값으로 복원**하는 컨텍스트 매니저를 추가한다.
+  ```python
+  import contextlib
+  from collections.abc import Iterator
+
+  @contextlib.contextmanager
+  def _temporary_env(overrides: dict[str, str]) -> Iterator[None]:
+      sentinel = object()
+      previous = {key: os.environ.get(key, sentinel) for key in overrides}
+      os.environ.update(overrides)
+      try:
+          yield
+      finally:
+          for key, old_value in previous.items():
+              if old_value is sentinel:
+                  os.environ.pop(key, None)
+              else:
+                  os.environ[key] = old_value
+  ```
+- `_configure_gpt_researcher(settings: Settings) -> None`을 §24 이전 형태(단일 인자)로 되돌린다 — SearXNG 타임아웃 몽키패치(변경 없음, 여전히 idempotent), `SEARX_URL`, `FAST_LLM`/`SMART_LLM`/`STRATEGIC_LLM`/`EMBEDDING`/`DEEPSEEK_API_KEY`만 설정한다. **`RETRIEVER`와 유료 API 키 설정은 이 함수에서 완전히 빼서** 호출부로 옮긴다.
+- `research_section()`을 단순화한다 (§24에서 만든 "1차 SearXNG 시도 → 실패 시 2차 폴백 시도"의 `_attempt()` 이중 시도 구조를 걷어내고, 사용자가 고른 리트리버 하나로 단일 시도만 한다):
+  ```python
+  gpt_researcher_retriever = "searx" if settings.retriever.lower() == "searxng" else settings.retriever.lower()
+  env_overrides = {"RETRIEVER": gpt_researcher_retriever}
+  if gpt_researcher_retriever != "searx":
+      env_overrides[PAID_RETRIEVER_API_KEY_ENV[settings.retriever.lower()]] = settings.retriever_api_key
+
+  try:
+      with _temporary_env(env_overrides):
+          _configure_gpt_researcher(settings)
+          researcher = factory(query=query, report_type="research_report", report_format="markdown",
+                                parent_query=topic, subtopics=siblings, verbose=False)
+          await researcher.conduct_research()
+          content = await researcher.write_report(custom_prompt=...)  # 기존 프롬프트 그대로
+          sources = _normalize_sources(researcher.get_research_sources())
+  except Exception:
+      if gpt_researcher_retriever == "searx":
+          diagnosis = await _diagnose_searxng_failure(query, settings)
+          logger.warning("SearXNG 실패 진단 (섹션 %s, 주제 %r): %s", section_id, topic, diagnosis)
+      raise
+
+  if not sources and gpt_researcher_retriever == "searx":
+      diagnosis = await _diagnose_searxng_failure(query, settings)
+      logger.warning("SearXNG 실패 진단 (섹션 %s, 주제 %r): %s", section_id, topic, diagnosis)
+  ```
+  이후(`content = _with_sources(...)`부터 `status="done"`/`"error"` 기록까지)는 §22에서 확립된 로직 그대로 변경 없음.
+- `_diagnose_searxng_failure()` 함수 자체는 손대지 않는다(§25 그대로) — 다만 이제 `gpt_researcher_retriever == "searx"`일 때만 호출된다는 점이 이번 변경의 핵심이다.
+
+`docker-compose.yml` — **이 부분을 빼먹으면 코드를 고쳐도 실제 배포에서는 여전히 SearXNG 고정이다**:
+- 지금 `app` 서비스의 `environment:` 블록에 `RETRIEVER: "searxng"`가 **하드코딩된 문자열**로 박혀 있다(다른 값들과 달리 `${RETRIEVER:-searxng}` 형식이 아님 — 직접 확인함). 이를 `RETRIEVER: "${RETRIEVER:-searxng}"`로 바꿔 `.env`의 값을 실제로 반영하게 한다.
+- 5개 유료 리트리버의 API 키 env var를 전부 통과시키는 항목을 추가한다: `TAVILY_API_KEY: "${TAVILY_API_KEY:-}"`, `SERPER_API_KEY: "${SERPER_API_KEY:-}"`, `SERPAPI_API_KEY: "${SERPAPI_API_KEY:-}"`, `SEARCHAPI_API_KEY: "${SEARCHAPI_API_KEY:-}"`, `EXA_API_KEY: "${EXA_API_KEY:-}"` (안 쓰면 빈 문자열이라 무해함).
+
+`docs/setup.md` / `.env.example`:
+- §24에서 추가했던 "SearXNG가 차단당할 때 유료 리트리버로 폴백하기 (선택)" 절을 "**검색 리트리버 선택하기 (선택)**"로 새로 쓴다 — `FALLBACK_RETRIEVER`/`FALLBACK_RETRIEVER_API_KEY` 대신 `RETRIEVER`를 `searxng`(기본)에서 지원 유료 리트리버 중 하나로 바꾸고 그 서비스의 API 키를 직접 설정(`TAVILY_API_KEY=` 등)하면 된다고 안내. 가입 링크/과금 경고/"관리할 비밀은 하나" 원칙 언급은 §24 문서 내용을 그대로 재사용하되 "폴백" 대신 "선택"이라는 표현으로 바꾼다.
+- 로그 페이지 설명(§20.2, §25에서 이미 한 줄 추가된 부분)에 "이 봇 차단 진단은 `RETRIEVER=searxng`(기본값)일 때만 남는다"는 점을 한 줄 덧붙인다.
+- `.env.example`의 기존 `# FALLBACK_RETRIEVER=tavily` / `# FALLBACK_RETRIEVER_API_KEY=` 블록을 지우고, `RETRIEVER=searxng` 줄 아래에 유료 리트리버로 바꾸는 예시 주석(`# RETRIEVER=tavily` + `# TAVILY_API_KEY=`)을 추가한다.
+
+### 26.3 테스트
+
+- `app/config.py`: 기본값(searxng, api key 불필요) 통과 회귀 테스트, 지원 안 하는 리트리버 이름 거부, 유료 리트리버인데 키 없으면 거부, 정상 조합(`RETRIEVER=tavily` + `TAVILY_API_KEY` 설정) 통과 — §24의 관련 테스트들을 필드명만 바꿔 그대로 재사용.
+- `app/research.py`:
+  - **환경변수 복원 회귀 테스트(신규, 가장 중요)**: `research_section()` 호출 전후로 `os.environ.get("RETRIEVER")`가 호출 전 값 그대로 복원되는지 확인 — 특히 호출 전에 `RETRIEVER` 환경변수가 아예 없던 경우 호출 후에도 없어야 함(`monkeypatch.delenv` 후 확인), 그리고 두 번 연속 `load_settings()`를 호출해도(사이에 `research_section()` 한 번 실행) 두 번째 호출이 첫 번째와 동일한 `retriever` 값을 읽는지 확인.
+  - 기본값(searxng)으로 정상 동작하는 회귀 테스트 — 기존 §22/§25 테스트들이 여전히 통과해야 함(하지만 `_attempt()` 이중 시도 구조가 없어졌으니 §24 전용 폴백 테스트들은 삭제).
+  - `RETRIEVER=tavily` + `TAVILY_API_KEY` 설정 시, 팩토리가 호출될 때 `os.environ["RETRIEVER"] == "tavily"`이고 `os.environ["TAVILY_API_KEY"]`가 설정돼 있는지 확인.
+  - `RETRIEVER=tavily`로 검색이 실패해도(예외 또는 빈 결과) `_diagnose_searxng_failure`가 **호출되지 않는지**(즉 SearXNG로 아무 요청도 안 가는지, `respx`로 SearXNG 라우트에 아무 호출도 없었음을 확인) 검증 — 이게 이번 변경의 핵심 회귀 조건이다.
+  - `RETRIEVER=searxng`(기본값)으로 실패하면 §25 그대로 진단이 호출되는지(기존 테스트 유지).
+- §24에서 추가됐던 "1차 예외 + 2차 폴백 성공", "1차/2차 모두 빈 결과", "1차 성공 시 2차 미호출" 테스트들은 그 메커니즘 자체가 삭제되므로 함께 삭제한다.
+
+---
+
 ## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
 
 - 구현 완료 후 코드 리뷰.
