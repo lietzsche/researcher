@@ -305,13 +305,15 @@ async function renderToc(slug, isPoll = false) {
           }
         </article>
       </section>`;
-    if (isGenerating && window.location.hash.endsWith("/toc")) {
-      pollTimer = window.setTimeout(() => {
-        renderToc(slug, true).catch((error) => {
-          notify(error.message, true);
-          pollTimer = window.setTimeout(() => renderToc(slug, true), 5000);
-        });
-      }, 3000);
+    if (isGenerating) {
+      if (window.location.hash.endsWith("/toc")) {
+        pollTimer = window.setTimeout(() => {
+          renderToc(slug, true).catch((error) => {
+            notify(error.message, true);
+            pollTimer = window.setTimeout(() => renderToc(slug, true), 5000);
+          });
+        }, 3000);
+      }
     } else {
       document.querySelector("#delete-topic").addEventListener("click", async () => {
         if (!window.confirm("이 주제를 삭제할까요?")) return;
