@@ -248,9 +248,17 @@ API 키가 어차피 필요하다면, [10장](#10-리스크--트레이드오프)
 
 ### 14.5 클라이언트 연동
 
-- **Claude Code CLI**: `claude mcp add --transport http <name> <tunnel-url>/mcp --header "Authorization: Bearer $MCP_BEARER_TOKEN"` 형태로 등록한다. 정확한 플래그는 `claude mcp add --help`로 구현 시점에 재확인할 것 (버전에 따라 문법이 바뀔 수 있음, 이 설계 문서 작성 시점엔 미검증).
+- **Claude Code CLI**: 2.1.214의 `claude mcp add --help`로 아래 문법을 실제 확인했다.
+  `claude mcp add --transport http deep-research-remote "$TUNNEL_URL/mcp" --header "Authorization: Bearer $MCP_BEARER_TOKEN"`
 - **claude.ai 웹 (커스텀 커넥터)**: 설정 화면에서 원격 MCP 서버 URL과 인증 헤더/토큰을 등록한다. UI가 OAuth를 강제하는지는 실제 화면에서 확인이 필요하다 — 강제한다면 이번 범위(정적 토큰)로는 부족하므로 별도 후속 작업으로 분리한다.
-- **Codex CLI**: 현재 `~/.codex/config.toml`의 `[mcp_servers.X]`가 `command`/`args`(로컬 프로세스 실행) 방식만 지원하는지, URL 기반 원격 transport도 지원하는지 **미확인 상태**다. 구현 시점에 검증해서 결과를 기록할 것 — 이번 설계가 보장하는 대상은 "Claude Code CLI + claude.ai 웹"이고, Codex CLI 원격 연동은 확인 후 별도 문서화한다.
+- **Codex CLI**: 0.141.0에서 URL 기반 streamable HTTP를 지원함을 실제 config 파서로 확인했다.
+  CLI 등록은 `codex mcp add deep-research-remote --url "$TUNNEL_URL/mcp" --bearer-token-env-var MCP_BEARER_TOKEN`,
+  `~/.codex/config.toml`은 아래 형식이다.
+  ```toml
+  [mcp_servers.deep-research-remote]
+  url = "https://<random>.trycloudflare.com/mcp"
+  bearer_token_env_var = "MCP_BEARER_TOKEN"
+  ```
 
 ### 14.6 리스크
 

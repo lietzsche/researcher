@@ -80,16 +80,16 @@
 
 > Phase 0-10은 완료됨. 이 phase는 로컬 stdio 기본 동작은 그대로 두고, 명시적으로 켰을 때만 동작하는 원격(streamable-http) 모드를 추가하는 선택 기능이다. 로컬 전용 사용자에게는 아무 영향이 없어야 한다 (`MCP_TRANSPORT` 미설정 시 지금과 100% 동일하게 동작).
 
-- [ ] `mcp_server/config.py`: `Settings`에 `mcp_transport`(기본 `"stdio"`), `mcp_host`(기본 `"127.0.0.1"`), `mcp_port`(기본 `8765`), `mcp_bearer_token`(`str | None`) 필드 추가. 검증 로직에 "`mcp_transport != 'stdio'`인데 `mcp_bearer_token`이 없으면 에러" 추가.
-- [ ] `mcp_server/auth.py` (신규): FastMCP `TokenVerifier` 프로토콜 구현체 — `Authorization: Bearer <token>`을 `secrets.compare_digest`로 상수 시간 비교. 잘못된/누락된 토큰은 인증 실패 처리.
-- [ ] `mcp_server/server.py`: `mcp_transport == "streamable-http"`일 때만 `FastMCP(...)`에 `host`/`port`/`token_verifier`를 전달하고, `transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)`로 명시적으로 완화 (DESIGN.md 14.3의 Host-header 함정 때문 — 이유를 코드 주석에 남길 것). `main()`은 `mcp.run(transport=settings.mcp_transport)`로 분기.
-- [ ] `.env.example`: `MCP_TRANSPORT`, `MCP_HOST`, `MCP_PORT`, `MCP_BEARER_TOKEN`을 주석 처리된 선택 옵션으로 추가, 토큰 생성 명령어(`python -c "import secrets; print(secrets.token_urlsafe(32))"`) 예시 포함.
-- [ ] `scripts/tunnel.sh` (신규, 실행권한 부여): `cloudflared` 설치 여부 확인 후 `cloudflared tunnel --url http://$MCP_HOST:$MCP_PORT` 실행하는 래퍼. 미설치 시 설치 안내 메시지 출력.
-- [ ] `tests/`: 토큰 검증 유닛 테스트(정상 토큰/틀린 토큰/토큰 없음), config 검증 테스트(`mcp_transport=streamable-http`인데 `mcp_bearer_token` 없으면 에러).
-- [ ] `claude mcp add --help`로 원격 http transport 등록 문법을 실제로 확인하고, 확인된 정확한 명령어를 커밋 메시지 또는 TASKS.md 이 항목 옆에 메모 (DESIGN.md 14.5는 미검증 초안이므로 실제 문법으로 교체 필요).
-- [ ] Codex CLI(`~/.codex/config.toml`)가 URL 기반 원격 MCP transport를 지원하는지 확인하고 결과(지원/미지원, 지원 시 문법)를 TASKS.md 이 항목 옆에 메모.
-- [ ] 실제로 `MCP_TRANSPORT=streamable-http`로 서버를 띄우고 `cloudflared tunnel --url ...`로 터널을 연 뒤, `curl`로 (a) `Authorization` 헤더 없이 호출 시 거부되는지, (b) 올바른 토큰으로 호출 시 정상 응답하는지 실제로 검증 (스모크 테스트, 결과를 커밋 메시지에 남길 것).
-- [ ] Phase 9와 동일한 커밋 규율: 논리 단위로 커밋 분리, `.env`/토큰 값이 커밋에 안 들어가는지 확인 후 push.
+- [x] `mcp_server/config.py`: `Settings`에 `mcp_transport`(기본 `"stdio"`), `mcp_host`(기본 `"127.0.0.1"`), `mcp_port`(기본 `8765`), `mcp_bearer_token`(`str | None`) 필드 추가. 검증 로직에 "`mcp_transport != 'stdio'`인데 `mcp_bearer_token`이 없으면 에러" 추가.
+- [x] `mcp_server/auth.py` (신규): FastMCP `TokenVerifier` 프로토콜 구현체 — `Authorization: Bearer <token>`을 `secrets.compare_digest`로 상수 시간 비교. 잘못된/누락된 토큰은 인증 실패 처리.
+- [x] `mcp_server/server.py`: `mcp_transport == "streamable-http"`일 때만 `FastMCP(...)`에 `host`/`port`/`token_verifier`를 전달하고, `transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)`로 명시적으로 완화 (DESIGN.md 14.3의 Host-header 함정 때문 — 이유를 코드 주석에 남길 것). `main()`은 `mcp.run(transport=settings.mcp_transport)`로 분기.
+- [x] `.env.example`: `MCP_TRANSPORT`, `MCP_HOST`, `MCP_PORT`, `MCP_BEARER_TOKEN`을 주석 처리된 선택 옵션으로 추가, 토큰 생성 명령어(`python -c "import secrets; print(secrets.token_urlsafe(32))"`) 예시 포함.
+- [x] `scripts/tunnel.sh` (신규, 실행권한 부여): `cloudflared` 설치 여부 확인 후 `cloudflared tunnel --url http://$MCP_HOST:$MCP_PORT` 실행하는 래퍼. 미설치 시 설치 안내 메시지 출력.
+- [x] `tests/`: 토큰 검증 유닛 테스트(정상 토큰/틀린 토큰/토큰 없음), config 검증 테스트(`mcp_transport=streamable-http`인데 `mcp_bearer_token` 없으면 에러).
+- [x] `claude mcp add --help`로 원격 http transport 등록 문법 확인: `claude mcp add --transport http deep-research-remote "$TUNNEL_URL/mcp" --header "Authorization: Bearer $MCP_BEARER_TOKEN"` (Claude Code 2.1.214).
+- [x] Codex CLI 0.141.0은 URL 기반 원격 MCP transport 지원 확인: `codex mcp add deep-research-remote --url "$TUNNEL_URL/mcp" --bearer-token-env-var MCP_BEARER_TOKEN`; TOML은 `url` + `bearer_token_env_var` 키 사용.
+- [x] 실제 `MCP_TRANSPORT=streamable-http` 서버 + cloudflared 2026.5.2 Quick Tunnel에서 curl 검증: 무인증 `401`, 올바른 토큰의 MCP `initialize` 요청 `200` (2026-07-26).
+- [x] Phase 9와 동일한 커밋 규율: 논리 단위로 커밋 분리, `.env`/토큰 값이 커밋에 안 들어가는지 확인 후 push.
 
 ---
 
