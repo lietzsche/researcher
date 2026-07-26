@@ -2,7 +2,7 @@
   "mcpServers": {
     "deep-research": {
       "type": "stdio",
-      "command": "python",
+      "command": "${CLAUDE_PROJECT_DIR}/.venv/bin/python",
       "args": [
         "${CLAUDE_PROJECT_DIR}/mcp_server/server.py"
       ]
