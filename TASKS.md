@@ -267,9 +267,9 @@
 - [x] `.env.example`에 `MAX_CONCURRENT_RESEARCH` 추가.
 
 ### 공통
-- [ ] `docs/setup.md`에 새 환경변수(`SECTION_TIMEOUT_SECONDS`, `MAX_CONCURRENT_RESEARCH`), 로그 페이지 사용법, 엑셀 다운로드 옵션, 섹션 상세 다음/이전 이동 안내 추가.
-- [ ] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마.
-- [ ] 논리 단위로 커밋 나눠서 push까지.
+- [x] `docs/setup.md`에 새 환경변수(`SECTION_TIMEOUT_SECONDS`, `MAX_CONCURRENT_RESEARCH`), 로그 페이지 사용법, 엑셀 다운로드 옵션, 섹션 상세 다음/이전 이동 안내 추가.
+- [x] TASKS.md 맨 아래 "완료 후 Claude가 담당할 작업" 항목은 네 범위가 아니니 건드리지 마.
+- [x] 논리 단위로 커밋 나눠서 push까지.
 
 ---
 
