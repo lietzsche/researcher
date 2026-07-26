@@ -65,6 +65,55 @@ def test_config_defaults_output_language_to_korean(
     assert settings.output_language == "Korean"
 
 
+def test_config_defaults_to_no_fallback_retriever(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("FALLBACK_RETRIEVER", raising=False)
+    monkeypatch.delenv("FALLBACK_RETRIEVER_API_KEY", raising=False)
+
+    settings = load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    )
+
+    assert settings.fallback_retriever is None
+    assert settings.fallback_retriever_api_key is None
+
+
+def test_config_rejects_unsupported_fallback_retriever() -> None:
+    with pytest.raises(ValueError, match="tavily, serper, serpapi"):
+        Settings(
+            require_api_key=False,
+            fallback_retriever="unsupported",
+            fallback_retriever_api_key="test-key",
+        )
+
+
+def test_config_requires_fallback_retriever_api_key() -> None:
+    with pytest.raises(ValueError, match="FALLBACK_RETRIEVER_API_KEY"):
+        Settings(
+            require_api_key=False,
+            fallback_retriever="tavily",
+        )
+
+
+def test_config_accepts_supported_fallback_retriever(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("FALLBACK_RETRIEVER", "tavily")
+    monkeypatch.setenv("FALLBACK_RETRIEVER_API_KEY", "test-tavily-key")
+
+    settings = load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    )
+
+    assert settings.fallback_retriever == "tavily"
+    assert settings.fallback_retriever_api_key == "test-tavily-key"
+
+
 def test_config_loads_output_language_from_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

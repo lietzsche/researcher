@@ -9,6 +9,16 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, HttpUrl, ValidationError, model_validator
 
 
+FALLBACK_RETRIEVER_API_KEY_ENV: dict[str, str] = {
+    "tavily": "TAVILY_API_KEY",
+    "serper": "SERPER_API_KEY",
+    "serpapi": "SERPAPI_API_KEY",
+    "searchapi": "SEARCHAPI_API_KEY",
+    "bing": "BING_API_KEY",
+    "exa": "EXA_API_KEY",
+}
+
+
 class Settings(BaseModel):
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
@@ -23,6 +33,8 @@ class Settings(BaseModel):
     embedding: str = "huggingface:sentence-transformers/all-MiniLM-L6-v2"
     output_language: str = "Korean"
     retriever: str = "searxng"
+    fallback_retriever: str | None = None
+    fallback_retriever_api_key: str | None = None
     searxng_url: HttpUrl = HttpUrl("http://localhost:8080")
     site_password: str | None = None
     research_output_dir: Path = Path("./outputs")
@@ -45,6 +57,19 @@ class Settings(BaseModel):
             )
         if self.retriever.lower() != "searxng":
             raise ValueError("RETRIEVER must be 'searxng' for local research")
+        if (
+            self.fallback_retriever
+            and self.fallback_retriever not in FALLBACK_RETRIEVER_API_KEY_ENV
+        ):
+            allowed = ", ".join(FALLBACK_RETRIEVER_API_KEY_ENV)
+            raise ValueError(
+                f"FALLBACK_RETRIEVER must be one of: {allowed}"
+            )
+        if self.fallback_retriever and not self.fallback_retriever_api_key:
+            raise ValueError(
+                "FALLBACK_RETRIEVER를 설정하려면 "
+                "FALLBACK_RETRIEVER_API_KEY도 필요합니다"
+            )
         return self
 
 
@@ -81,6 +106,10 @@ def load_settings(
         # assert the local-only design invariant, so it is never meant to be
         # user-configurable via the environment.
         "retriever": "searxng",
+        "fallback_retriever": os.getenv("FALLBACK_RETRIEVER") or None,
+        "fallback_retriever_api_key": (
+            os.getenv("FALLBACK_RETRIEVER_API_KEY") or None
+        ),
         "searxng_url": os.getenv("SEARXNG_URL", "http://localhost:8080"),
         "site_password": os.getenv("SITE_PASSWORD") or None,
         "research_output_dir": Path(
