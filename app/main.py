@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Protocol
 
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.config import Settings, load_settings
 from app.jobs import SerialJobQueue
+from app.logs import InMemoryLogHandler
 from app.schemas import GenerateTocInput
 from app.storage import OutputStorage
 from app.toc import generate_toc
@@ -126,20 +127,29 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        application.state.settings = settings or load_settings()
-        application.state.settings.research_output_dir.mkdir(
-            parents=True, exist_ok=True
-        )
-        if application.state.settings.site_password is None:
-            logger.warning(
-                "SITE_PASSWORD is not set; the web application is running "
-                "without authentication"
+        root_logger = logging.getLogger()
+        log_handler = InMemoryLogHandler()
+        root_logger.addHandler(log_handler)
+        application.state.log_handler = log_handler
+        queue_instance: JobQueue | None = None
+        try:
+            application.state.settings = settings or load_settings()
+            application.state.settings.research_output_dir.mkdir(
+                parents=True, exist_ok=True
             )
-        queue_instance = job_queue or SerialJobQueue(application.state.settings)
-        application.state.job_queue = queue_instance
-        await queue_instance.start()
-        yield
-        await queue_instance.stop()
+            if application.state.settings.site_password is None:
+                logger.warning(
+                    "SITE_PASSWORD is not set; the web application is running "
+                    "without authentication"
+                )
+            queue_instance = job_queue or SerialJobQueue(application.state.settings)
+            application.state.job_queue = queue_instance
+            await queue_instance.start()
+            yield
+        finally:
+            if queue_instance is not None:
+                await queue_instance.stop()
+            root_logger.removeHandler(log_handler)
 
     application = FastAPI(title="Deep Research", lifespan=lifespan)
 
@@ -164,6 +174,15 @@ def create_app(
                     headers={"WWW-Authenticate": "Basic"},
                 )
         return await call_next(request)
+
+    @application.get("/api/logs")
+    async def get_logs(
+        request: Request,
+        after_id: int = Query(default=0, ge=0),
+        limit: int = Query(default=200, ge=1, le=1000),
+    ) -> list[dict[str, Any]]:
+        handler: InMemoryLogHandler = request.app.state.log_handler
+        return handler.get_records(after_id=after_id, limit=limit)
 
     @application.post("/api/topics", status_code=status.HTTP_201_CREATED)
     async def create_topic(payload: GenerateTocInput, request: Request) -> dict[str, Any]:

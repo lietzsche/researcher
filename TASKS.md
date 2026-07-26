@@ -240,11 +240,11 @@
 - [x] `.env.example`에 `SECTION_TIMEOUT_SECONDS` 추가.
 
 ### 17.2 서버 로그 페이지 (DESIGN.md §20.2)
-- [ ] `app/logs.py` 신규: `InMemoryLogHandler(logging.Handler)`가 `collections.deque(maxlen=1000)`에 `{id, timestamp, level, logger, message}` 저장, `id`는 단조 증가.
-- [ ] `create_app()`의 lifespan에서 루트 로거에 이 핸들러 부착.
-- [ ] `GET /api/logs?after_id=0&limit=200` 엔드포인트 추가 — `after_id`보다 큰 로그만 오름차순 반환. 인증은 기존 미들웨어가 전체 라우트에 이미 적용되니 별도 처리 불필요.
-- [ ] `app/static/app.js`: `#/logs` 라우트 추가, 홈 히어로에 "서버 로그" 링크 추가. 3~5초 폴링, 레벨별 색상 표시(error/warning 강조).
-- [ ] 테스트: 로그 핸들러가 로그를 쌓는지, `/api/logs?after_id=`가 커서 이후 것만 반환하는지, `maxlen` 초과 시 오래된 것부터 버려지는지.
+- [x] `app/logs.py` 신규: `InMemoryLogHandler(logging.Handler)`가 `collections.deque(maxlen=1000)`에 `{id, timestamp, level, logger, message}` 저장, `id`는 단조 증가.
+- [x] `create_app()`의 lifespan에서 루트 로거에 이 핸들러 부착.
+- [x] `GET /api/logs?after_id=0&limit=200` 엔드포인트 추가 — `after_id`보다 큰 로그만 오름차순 반환. 인증은 기존 미들웨어가 전체 라우트에 이미 적용되니 별도 처리 불필요.
+- [x] `app/static/app.js`: `#/logs` 라우트 추가, 홈 히어로에 "서버 로그" 링크 추가. 3~5초 폴링, 레벨별 색상 표시(error/warning 강조).
+- [x] 테스트: 로그 핸들러가 로그를 쌓는지, `/api/logs?after_id=`가 커서 이후 것만 반환하는지, `maxlen` 초과 시 오래된 것부터 버려지는지.
 
 ### 17.3 섹션 상세 → 바로 다음/이전 섹션 (DESIGN.md §20.3)
 - [ ] `app/static/app.js`의 `renderSectionDocument(slug, sectionId)` 수정: 섹션 본문 fetch와 별도로 `GET /api/topics/{slug}`를 호출해 `toc` 순서 + `manifest.sections` 상태를 얻는다. 현재 섹션 인덱스를 찾아 이전/다음 section id 계산, 이웃 섹션이 `status === "done"`일 때만 링크 활성화.

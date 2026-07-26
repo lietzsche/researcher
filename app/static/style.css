@@ -97,6 +97,12 @@ textarea:focus-visible {
   margin-bottom: 4rem;
 }
 
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
 .hero {
   min-height: 250px;
 }
@@ -641,6 +647,61 @@ textarea {
   border-top: 1px solid var(--line);
 }
 
+.logs-heading {
+  margin-bottom: 2rem;
+}
+
+.logs-heading h1 {
+  font-size: clamp(2.1rem, 6vw, 4rem);
+}
+
+.log-panel {
+  min-height: 280px;
+  padding: 1rem;
+}
+
+.log-list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.log-entry {
+  display: grid;
+  grid-template-columns: 12rem 5rem minmax(9rem, 0.3fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0.7rem 0.8rem;
+  border-left: 3px solid var(--line);
+  border-radius: 6px;
+  background: #f5f4ef;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.log-entry time,
+.log-name {
+  color: var(--muted);
+}
+
+.log-message {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.log-entry.level-warning {
+  border-left-color: #d69922;
+  background: #fff9e9;
+}
+
+.log-entry.level-error,
+.log-entry.level-critical {
+  border-left-color: var(--danger);
+  background: #fff7f5;
+}
+
 .toast {
   position: fixed;
   right: 1.25rem;
@@ -688,6 +749,20 @@ textarea {
     align-items: stretch;
     flex-direction: column;
     margin-bottom: 2.5rem;
+  }
+
+  .hero-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .log-entry {
+    grid-template-columns: auto 1fr;
+  }
+
+  .log-name,
+  .log-message {
+    grid-column: 1 / -1;
   }
 
   .hero h1 {

@@ -120,7 +120,10 @@ async function renderHome() {
         <h1>무엇을 깊이 공부할까요?</h1>
         <p>먼저 목차를 확인하고, 필요한 섹션만 골라 리서치할 수 있습니다.</p>
       </div>
-      <a class="button button-primary" href="#/new">새 주제 만들기</a>
+      <div class="hero-actions">
+        <a class="button button-ghost" href="#/logs">서버 로그</a>
+        <a class="button button-primary" href="#/new">새 주제 만들기</a>
+      </div>
     </section>
     <section>
       <div class="section-heading">
@@ -473,6 +476,57 @@ async function renderSectionDocument(slug, sectionId) {
   enableInPageAnchors(appRoot.querySelector(".prose"));
 }
 
+async function renderLogs() {
+  appRoot.innerHTML = `
+    <section class="page-heading logs-heading">
+      <div>
+        <a class="back-link" href="#/">← 내 주제</a>
+        <p class="eyebrow">운영 상태</p>
+        <h1>서버 로그</h1>
+        <p>최근 1,000개 로그를 보여주며 4초마다 새 항목을 가져옵니다.</p>
+      </div>
+      <span id="log-status" class="count">연결 중</span>
+    </section>
+    <section class="panel log-panel">
+      <p id="log-empty" class="muted">표시할 로그가 없습니다.</p>
+      <ol id="log-list" class="log-list"></ol>
+    </section>`;
+
+  const list = document.querySelector("#log-list");
+  const empty = document.querySelector("#log-empty");
+  const status = document.querySelector("#log-status");
+  let lastId = 0;
+
+  const poll = async () => {
+    try {
+      const records = await api(`/api/logs?after_id=${lastId}&limit=200`);
+      for (const record of records) {
+        list.insertAdjacentHTML(
+          "beforeend",
+          `<li class="log-entry level-${escapeHtml(record.level).toLowerCase()}">
+            <time>${escapeHtml(new Date(record.timestamp).toLocaleString("ko-KR"))}</time>
+            <strong>${escapeHtml(record.level)}</strong>
+            <span class="log-name">${escapeHtml(record.logger)}</span>
+            <span class="log-message">${escapeHtml(record.message)}</span>
+          </li>`,
+        );
+        lastId = Math.max(lastId, Number(record.id));
+      }
+      empty.hidden = list.children.length > 0;
+      status.textContent = `최근 ID ${lastId}`;
+    } catch (error) {
+      status.textContent = "연결 오류";
+      notify(error.message, true);
+    } finally {
+      if (window.location.hash === "#/logs") {
+        pollTimer = window.setTimeout(poll, 4000);
+      }
+    }
+  };
+
+  await poll();
+}
+
 async function route() {
   stopPolling();
   const parts = window.location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -481,6 +535,8 @@ async function route() {
       await renderHome();
     } else if (parts[0] === "new") {
       renderNewTopic();
+    } else if (parts[0] === "logs" && parts.length === 1) {
+      await renderLogs();
     } else if (parts[0] === "topic" && (parts.length === 3 || parts.length === 4)) {
       const slug = decodeURIComponent(parts[1]);
       if (parts[2] === "toc" && parts.length === 3) await renderToc(slug);
