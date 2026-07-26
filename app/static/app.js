@@ -188,6 +188,19 @@ function topicCard(topic) {
     ? Math.round((topic.completed_sections / topic.total_sections) * 100)
     : 0;
   const slug = encodeSlug(topic.slug);
+  const tocStatus = topic.toc_status || "done";
+  const progressOrStatus =
+    tocStatus === "generating"
+      ? '<span class="status-badge in_progress">목차 생성 중</span>'
+      : tocStatus === "error"
+        ? '<span class="status-badge error">목차 생성 실패</span>'
+        : `<div class="progress-row">
+            <div class="progress-track" aria-label="진행률 ${percent}%">
+              <span style="width: ${percent}%"></span>
+            </div>
+            <strong>${progressText(topic.completed_sections, topic.total_sections)}</strong>
+          </div>`;
+  const openDestination = tocStatus === "done" ? "progress" : "toc";
   return `
     <article class="panel topic-card">
       <div class="card-topline">
@@ -195,14 +208,9 @@ function topicCard(topic) {
         <time>${escapeHtml(created)}</time>
       </div>
       <h3>${escapeHtml(topic.topic)}</h3>
-      <div class="progress-row">
-        <div class="progress-track" aria-label="진행률 ${percent}%">
-          <span style="width: ${percent}%"></span>
-        </div>
-        <strong>${progressText(topic.completed_sections, topic.total_sections)}</strong>
-      </div>
+      ${progressOrStatus}
       <div class="card-actions">
-        <a class="button button-small" href="#/topic/${slug}/progress">열기</a>
+        <a class="button button-small" href="#/topic/${slug}/${openDestination}">열기</a>
         ${
           topic.has_study_document
             ? `<a class="button button-small button-ghost" href="/api/topics/${slug}/download">다운로드 (MD)</a>
@@ -265,7 +273,7 @@ function renderNewTopic() {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      const slug = result.manifest.topic_slug;
+      const slug = result.slug;
       window.location.hash = `#/topic/${encodeSlug(slug)}/toc`;
     } catch (error) {
       button.disabled = false;
@@ -279,6 +287,45 @@ async function renderToc(slug, isPoll = false) {
   if (!isPoll) setLoading("목차를 불러오는 중…");
   const detail = await api(`/api/topics/${encodeSlug(slug)}`);
   const { toc, manifest } = detail;
+  const tocStatus = manifest.toc_status || "done";
+  if (tocStatus !== "done") {
+    const isGenerating = tocStatus === "generating";
+    appRoot.innerHTML = `
+      <section class="narrow">
+        <a class="back-link" href="#/">← 내 주제</a>
+        <article class="panel">
+          <p class="eyebrow">${escapeHtml(manifest.depth)} 목차</p>
+          <h1>${escapeHtml(manifest.topic)}</h1>
+          ${
+            isGenerating
+              ? '<p class="research-notice">목차를 생성하는 중입니다… 자동으로 갱신됩니다.</p>'
+              : `<p class="status-badge error">목차 생성 실패</p>
+                 <p>${escapeHtml(manifest.toc_error || "알 수 없는 오류")}</p>
+                 <button id="delete-topic" class="button button-danger">주제 삭제</button>`
+          }
+        </article>
+      </section>`;
+    if (isGenerating && window.location.hash.endsWith("/toc")) {
+      pollTimer = window.setTimeout(() => {
+        renderToc(slug, true).catch((error) => {
+          notify(error.message, true);
+          pollTimer = window.setTimeout(() => renderToc(slug, true), 5000);
+        });
+      }, 3000);
+    } else {
+      document.querySelector("#delete-topic").addEventListener("click", async () => {
+        if (!window.confirm("이 주제를 삭제할까요?")) return;
+        try {
+          await api(`/api/topics/${encodeSlug(slug)}`, { method: "DELETE" });
+          notify("주제를 삭제했습니다.");
+          window.location.hash = "#/";
+        } catch (error) {
+          notify(error.message, true);
+        }
+      });
+    }
+    return;
+  }
   const isRunning = manifest.sections.some((section) => section.status === "in_progress");
   appRoot.innerHTML = `
     ${
@@ -299,18 +346,15 @@ async function renderToc(slug, isPoll = false) {
       ${toc.map((section) => tocSection(section, manifest, isRunning)).join("")}
     </div>`;
 
-  document.querySelector("#build-all").addEventListener("click", async (event) => {
+  document.querySelector("#build-all").addEventListener("click", (event) => {
     event.currentTarget.disabled = true;
-    try {
-      await api(`/api/topics/${encodeSlug(slug)}/build`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      window.location.hash = `#/topic/${encodeSlug(slug)}/progress`;
-    } catch (error) {
-      event.currentTarget.disabled = false;
+    api(`/api/topics/${encodeSlug(slug)}/build`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }).catch((error) => {
       notify(error.message, true);
-    }
+    });
+    window.location.hash = `#/topic/${encodeSlug(slug)}/progress`;
   });
   appRoot.querySelectorAll("[data-research-section]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -505,14 +549,19 @@ async function renderSectionDocument(slug, sectionId) {
       href="#/topic/${encodeSlug(slug)}/section/${encodeURIComponent(neighbor.id)}"
       title="${escapeHtml(neighbor.title)}">${escapeHtml(label)}</a>`;
   };
+  const previousButton = neighborButton(neighbors.previous, "← 이전 섹션");
+  const nextButton = neighborButton(neighbors.next, "다음 섹션 →");
+  const sectionNavigation = `
+    <nav class="section-nav" aria-label="섹션 이동">
+      ${previousButton}
+      ${nextButton}
+    </nav>`;
   appRoot.innerHTML = `
     <section class="narrow">
       <a class="back-link" href="#/topic/${encodeSlug(slug)}/progress">← 돌아가기</a>
-      <nav class="section-nav" aria-label="섹션 이동">
-        ${neighborButton(neighbors.previous, "← 이전 섹션")}
-        ${neighborButton(neighbors.next, "다음 섹션 →")}
-      </nav>
+      ${sectionNavigation}
       <article class="panel prose">${marked.parse(text)}</article>
+      ${sectionNavigation}
     </section>`;
   enableInPageAnchors(appRoot.querySelector(".prose"));
 }
