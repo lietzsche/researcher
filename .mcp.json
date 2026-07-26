@@ -2,9 +2,10 @@
   "mcpServers": {
     "deep-research": {
       "type": "stdio",
-      "command": "${CLAUDE_PROJECT_DIR}/.venv/bin/python",
+      "command": "bash",
       "args": [
-        "${CLAUDE_PROJECT_DIR}/mcp_server/server.py"
+        "-lc",
+        "root=\"$(git rev-parse --show-toplevel)\" && exec \"$root/.venv/bin/python\" \"$root/mcp_server/server.py\""
       ]
     }
   }

@@ -38,11 +38,13 @@ Code/Codex CLI가 없는 환경이나 claude.ai 웹에서 붙이고 싶다면
 
 ## MCP 클라이언트 연결
 
-저장소의 [`.mcp.json`](./.mcp.json)은 `${CLAUDE_PROJECT_DIR}/.venv/bin/python`을
-직접 가리킵니다 — Claude Code가 자동으로 주입하는 `CLAUDE_PROJECT_DIR` 덕분에
-clone 위치와 무관하게, macOS/Linux/WSL에서 `.venv`만 만들어 두면 별도 설정
-없이 그대로 연결됩니다. CLI로 다른 인터프리터를 명시하려면 다음과 같이
-실행할 수 있습니다.
+저장소의 [`.mcp.json`](./.mcp.json)은 실행 시점에 `git rev-parse
+--show-toplevel`로 저장소 루트를 찾아 그 안의 `.venv/bin/python`을 실행합니다
+(Codex 설정과 동일한 방식). `${CLAUDE_PROJECT_DIR}` 환경변수는 Claude Code
+클라이언트마다 주입 여부가 달라 신뢰할 수 없어서 쓰지 않습니다 — clone
+위치와 무관하게, macOS/Linux/WSL에서 `.venv`만 만들어 두면 별도 설정 없이
+그대로 연결됩니다. CLI로 다른 인터프리터를 명시하려면 다음과 같이 실행할
+수 있습니다.
 
 ```bash
 claude mcp add --scope project deep-research -- \
