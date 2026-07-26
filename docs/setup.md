@@ -62,8 +62,9 @@ scripts/redeploy.sh
 - `serper`: [Serper](https://serper.dev/)
 - `serpapi`: [SerpApi](https://serpapi.com/)
 - `searchapi`: [SearchApi](https://www.searchapi.io/)
-- `bing`: [Azure Bing Search API](https://learn.microsoft.com/en-us/lifecycle/announcements/bing-search-api-retirement) — Microsoft가 2025년 8월 11일 서비스를 완전히 종료해 신규 가입이나 신규 키 발급은 불가능합니다. GPT-Researcher 호환 리트리버 이름을 보존하기 위해 설정 목록에는 남아 있지만 현재 새로 선택할 수 있는 서비스는 아닙니다.
 - `exa`: [Exa](https://exa.ai/)
+
+(Bing은 지원하지 않습니다 — Microsoft가 [2025년 8월 11일 기존 인스턴스까지 포함해 Bing Search API를 완전히 폐지](https://learn.microsoft.com/en-us/lifecycle/announcements/bing-search-api-retirement)했고, 후속 서비스인 "Grounding with Bing Search"는 호환되지 않는 별개의 API라 이미 발급받은 키가 있어도 쓸 수 없습니다.)
 
 각 서비스의 무료 크레딧과 가격은 수시로 바뀌므로 위 가입 페이지의 최신 가격 정책을 직접 확인하세요.
 

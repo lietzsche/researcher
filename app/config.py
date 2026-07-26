@@ -14,9 +14,12 @@ FALLBACK_RETRIEVER_API_KEY_ENV: dict[str, str] = {
     "serper": "SERPER_API_KEY",
     "serpapi": "SERPAPI_API_KEY",
     "searchapi": "SEARCHAPI_API_KEY",
-    "bing": "BING_API_KEY",
     "exa": "EXA_API_KEY",
 }
+# Bing is deliberately excluded: Microsoft fully decommissioned the Bing
+# Search APIs (including existing instances, not just new signups) on
+# 2025-08-11 in favor of the incompatible "Grounding with Bing Search" Azure
+# AI product. Verified directly against Microsoft's own lifecycle page.
 
 
 class Settings(BaseModel):
