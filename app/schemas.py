@@ -1,4 +1,4 @@
-"""Pydantic schemas shared by MCP tools."""
+"""Pydantic schemas shared by the research services and HTTP API."""
 
 from __future__ import annotations
 

@@ -357,7 +357,7 @@ async function renderProgress(slug, isPoll = false) {
     }
   });
 
-  if (running && window.location.hash.endsWith("/progress")) {
+  if (window.location.hash.endsWith("/progress")) {
     pollTimer = window.setTimeout(() => {
       renderProgress(slug, true).catch((error) => {
         notify(error.message, true);
