@@ -862,6 +862,61 @@ SearXNG의 `/search?format=json` 응답은 `results` 외에 `unresponsive_engine
 
 ---
 
+## 27. 백그라운드 리서치가 이벤트 루프를 막아 다른 요청이 지연되는 문제 (Phase 24 구현 대상)
+
+### 27.1 증상
+
+사용자 보고: "전체 리서치 시작"을 누르면 곧바로 다음 메시지가 뜬다.
+```
+서버 응답이 지연되고 있습니다. 잠시 후 다시 시도하세요.
+잠시 뒤 다시 시도하거나 홈으로 돌아가세요.
+```
+`app/static/app.js`의 `api()` 헬퍼는 모든 fetch에 `API_TIMEOUT_MS = 20000`(20초) `AbortController` 타임아웃을 걸어두고, 시간 초과 시 이 문구를 띄운다(직접 코드로 확인). `#build-all` 클릭 핸들러는 §23(Phase 20)에서 이미 POST 응답을 기다리지 않고 즉시 진행 화면(`#/topic/{slug}/progress`)으로 이동하도록 고쳐뒀는데, 그 진행 화면이 뜨자마자 실행하는 최초 상태 조회(`GET /api/topics/{slug}`)가 바로 이 20초 제한에 걸려 실패하는 것으로 보인다.
+
+### 27.2 근본 원인 (직접 소스로 확인함)
+
+이 앱의 백그라운드 작업 큐(`app/jobs.py`의 `SerialJobQueue`)는 **FastAPI 서버와 완전히 같은 프로세스, 같은 이벤트 루프** 위에서 `asyncio.create_task`로 돌아가는 단일 워커다(별도 프로세스나 스레드가 아님 — `start()`/`_run()` 코드로 직접 확인). 그런데 GPT-Researcher 내부는 `async def`로 선언된 메서드 안에서 **동기(blocking) 함수를 그대로 호출**하는 곳이 있다:
+
+- `gpt_researcher/actions/query_processing.py`의 `get_search_results()`는 `async def`이지만, 본문에서 `return search_retriever.search()`처럼 리트리버의 동기 `search()` 메서드를 **스레드 오프로딩 없이 직접** 호출한다(GitHub 소스로 직접 확인).
+- `gpt_researcher/retrievers/searx/searx.py`의 `SearxSearch.search()`는 `requests.get(...)`(동기 HTTP 호출)을 사용한다(§20 리뷰에서 이미 확인했던 바로 그 코드).
+- 로컬 임베딩(`EMBEDDING=huggingface:...`, §14)도 CPU에서 `sentence-transformers`로 유사도 계산을 수행하는데, 이 역시 동기·CPU 바운드 작업이다(테스트 실행 로그에 매번 뜨는 "CUDA initialization: The NVIDIA driver..." 경고로 이 환경이 GPU 없이 CPU로 돌고 있음을 확인).
+
+Python의 단일 스레드 이벤트 루프에서는, `await`되는 코루틴 안에 **진짜로 블로킹되는 동기 코드**가 섞여 있으면 그 코드가 실행되는 동안 이벤트 루프 자체가 멈춘다 — 그 프로세스가 처리 중인 **다른 모든** 요청(HTTP 핸들러 포함)도 함께 멈춘다. 즉 "전체 리서치 시작"으로 백그라운드 작업이 SearXNG 검색이나 임베딩 계산 같은 블로킹 구간에 들어가 있는 동안에는, 진행 화면이 상태를 물어보는 그 흔한 `GET /api/topics/{slug}` 요청조차 처리되지 못하고 대기열에 걸려버린다 — 그 요청 자체는 manifest.json 하나 읽는 몇 마이크로초짜리 일인데도, 이벤트 루프가 다른 일로 막혀 있으면 아예 시작도 못 한다. `SECTION_TIMEOUT_SECONDS` 기본값이 900초나 되는 것도 이 블로킹 구간이 상당히 길어질 수 있다는 걸 시사한다.
+
+### 27.3 설계
+
+이벤트 루프를 막는 근본 원인(GPT-Researcher 내부의 블로킹 호출)을 우리가 직접 고칠 수는 없으니(외부 의존성), 대신 **작업 큐가 작업 하나를 처리할 때마다 그 작업 전체를 별도의 OS 스레드에서, 별도의 새 이벤트 루프로 실행**하게 만든다 — 메인 이벤트 루프(HTTP 요청을 처리하는 그 루프)는 항상 자유롭게 비워둔다.
+
+- `app/jobs.py`에 모듈 함수 추가:
+  ```python
+  def _run_coroutine_in_thread(coro_factory, /, *args, **kwargs):
+      """Drive a fresh coroutine to completion on a new event loop, off the main thread."""
+      return asyncio.run(coro_factory(*args, **kwargs))
+  ```
+- `SerialJobQueue._run()`의 디스패치 부분을 바꾼다:
+  ```python
+  if job.kind == "section":
+      await asyncio.to_thread(
+          _run_coroutine_in_thread, self._research_one, job, job.section_ids[0]
+      )
+  elif job.kind == "build":
+      await asyncio.to_thread(_run_coroutine_in_thread, self._run_build, job)
+  else:
+      await asyncio.to_thread(_run_coroutine_in_thread, self._generate_toc, job)
+  ```
+  `_research_one`/`_run_build`/`_generate_toc` 세 메서드 자체(내부의 `asyncio.wait_for` 타임아웃, `_run_build`의 세마포어+`asyncio.gather` 동시성, 예외 처리)는 **전혀 수정하지 않는다** — 그 코루틴 트리를 통째로 어느 스레드/이벤트 루프에서 실행할지만 바꾸는 것이다.
+- **왜 개별 섹션이 아니라 "작업(job) 하나 전체"를 스레드 단위로 묶어야 하는가**: `_run_build`는 `MAX_CONCURRENT_RESEARCH` 세마포어로 여러 섹션을 "동시에" 처리하는데, 이 동시성은 지금까지 **하나의 이벤트 루프 안에서 코루틴이 협조적으로 번갈아 실행되는 것**을 전제로 안전했다 — `app/storage.py`의 `update_section()`은 manifest.json을 "전체 읽기 → 메모리에서 수정 → 전체 쓰기"하는 방식이고 **락이 전혀 없다**(직접 코드로 확인). 지금은 이 함수 본문에 `await`가 없어서 한 코루틴이 실행을 시작하면 중간에 다른 코루틴에게 뺏기지 않고 끝까지 실행되기 때문에 사실상 원자적이다. 만약 섹션 하나하나를 각자 별도의 OS 스레드로 돌리면, 진짜로 여러 스레드가 동시에 같은 manifest.json에 읽기-수정-쓰기를 시도할 수 있어 **갱신 유실(lost update)** 레이스가 새로 생긴다. 반면 빌드 작업 "전체"를 하나의 스레드/이벤트 루프에 통째로 옮기면, 그 안의 세마포어+gather 동시성은 여전히 그 스레드 안에서 하나의 이벤트 루프가 처리하므로 지금과 똑같이 안전하다 — 단지 그 이벤트 루프 자체가 메인 스레드가 아닐 뿐이다.
+- **알려진 트레이드오프 (종료 시 동작 변화)**: 지금은 `SerialJobQueue.stop()`이 워커 태스크를 취소하면 그 안에서 실행 중이던 `research_section()` 등도 즉시 `asyncio.CancelledError`로 중단된다. 이 설계 이후에는, 워커가 백그라운드 스레드의 완료를 `await`하는 형태가 되므로 **스레드 자체를 강제로 중단시킬 방법이 없다** — 앱이 종료돼도 이미 실행 중이던 작업은 자기 자신의 타임아웃(`SECTION_TIMEOUT_SECONDS`/`TOC_TIMEOUT_SECONDS`)까지는 백그라운드에서 계속 실행되다가 끝난다(다만 그 결과를 아무도 기다리지 않을 뿐이다). 이건 개인용 단일 서버 앱에서 감수할 만한 트레이드오프로 판단한다 — 어차피 §20(Phase 20)에서 만든 `reconcile_stale_jobs()`가 재시작 시 `in_progress` 상태를 정리해주므로, 비정상 종료 후 상태가 꼬이는 일은 이미 방어돼 있다.
+- 프론트엔드(`app/static/app.js`)는 **변경하지 않는다** — `API_TIMEOUT_MS`를 늘리는 식의 대증 처방은 근본 원인을 안 고치는 것이라 하지 않는다. 이 설계로 이벤트 루프가 막히지 않으면 폴링/조회 요청은 원래도 순식간에 끝나는 일이라 20초 제한에 걸릴 이유가 없어진다.
+
+### 27.4 테스트
+
+- `app/jobs.py`: 가짜(블로킹 아닌) `research_section`/`generate_toc` 대신, **일부러 짧게 블로킹(`time.sleep`)하는 동기 콜백을 감싼 코루틴**을 주입해서, 그 작업이 실행되는 동안 **메인 이벤트 루프에서 동시에 실행한 다른 간단한 코루틴(예: `asyncio.sleep(0)` 몇 번 또는 별도 `asyncio.Queue` 응답)이 지연 없이 완료되는지** 확인하는 테스트를 추가한다 — 이게 이번 수정의 핵심 회귀 조건이다(전에는 이런 테스트가 없었다는 것 자체가 이 문제가 지금까지 안 드러난 이유이기도 하다).
+- 기존 `_run_build`/`_research_one`/`_generate_toc`의 동시성·타임아웃·매니페스트 갱신 테스트는 스레드 경유 여부와 무관하게 그대로 통과해야 한다(회귀 확인).
+- `SerialJobQueue.stop()`이 여전히 정상적으로 반환되는지(백그라운드 스레드가 남아있어도 `.stop()` 자체가 걸리거나 예외를 던지지 않는지) 확인한다.
+
+---
+
 ## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
 
 - 구현 완료 후 코드 리뷰.

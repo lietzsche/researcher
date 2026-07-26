@@ -415,6 +415,21 @@
 
 ---
 
+## Phase 24 — 백그라운드 리서치가 이벤트 루프를 막아 다른 요청이 지연되는 문제 해결 (DESIGN.md §27)
+
+> DESIGN.md §27을 먼저 전체 읽고 시작할 것. 이건 GPT-Researcher 내부의 동기 블로킹 호출(우리가 못 고침) 때문에 백그라운드 작업이 메인 이벤트 루프 전체를 막아버려서, 그 작업이 실행되는 동안 다른 모든 HTTP 요청(진행 화면의 폴링 포함)이 지연되는 문제를 고치는 작업이다. 왜 "섹션 하나하나"가 아니라 "작업(job) 전체"를 스레드 단위로 묶어야 하는지(매니페스트 레이스 방지) DESIGN.md §27.3을 정확히 이해하고 시작해.
+
+- [ ] `app/jobs.py`:
+  - 모듈 함수 `_run_coroutine_in_thread(coro_factory, /, *args, **kwargs)` 추가 — `asyncio.run(coro_factory(*args, **kwargs))`를 반환.
+  - `SerialJobQueue._run()`의 디스패치(`if job.kind == "section": await self._research_one(...)` 등)를 각각 `await asyncio.to_thread(_run_coroutine_in_thread, self._research_one, job, job.section_ids[0])` / `await asyncio.to_thread(_run_coroutine_in_thread, self._run_build, job)` / `await asyncio.to_thread(_run_coroutine_in_thread, self._generate_toc, job)`로 바꾼다. **`_research_one`/`_run_build`/`_generate_toc` 세 메서드 내부는 전혀 수정하지 마** — 어느 스레드/이벤트 루프에서 그 코루틴 트리를 실행할지만 바뀐다.
+- [ ] 테스트(DESIGN.md §27.4 그대로):
+  - **핵심 회귀 테스트**: 일부러 짧게 블로킹하는(`time.sleep`) 동기 코드를 감싼 가짜 작업을 큐에 넣고 실행하는 동안, 메인 이벤트 루프에서 동시에 다른 간단한 코루틴이 지연 없이 완료되는지 확인 — 이게 이번 수정이 실제로 문제를 해결했다는 걸 증명하는 유일한 테스트다.
+  - 기존 `_run_build`/`_research_one`/`_generate_toc`의 동시성·타임아웃·매니페스트 갱신 관련 테스트들이 전부 그대로 통과하는지(회귀 없음).
+  - `SerialJobQueue.stop()`이 여전히 정상적으로(멈추거나 예외 없이) 반환되는지 확인.
+- [ ] 논리 단위로 커밋 나눠서 push까지.
+
+---
+
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
 - [x] 구현 코드 리뷰 — 발견한 4건(전부 심각도 높음)을 직접 수정: `gpt-researcher` 0.16.0 import 버그 → 버전 상한 고정, DeepSeek-only 설정에서 임베딩 때문에 죽는 문제 → `EMBEDDING` 기본값 추가, `RETRIEVER` 환경변수 충돌로 2섹션 이상 `build_study_document`가 항상 실패하던 버그 → 수정, 한글 주제가 해시 폴더명으로 뭉개지던 `slugify` 버그 → 수정. 낮은 우선순위 2건(SearXNG 빈 검색 결과 조용히 통과, `SEARXNG_SECRET` 무효)은 DESIGN.md/docs/setup.md에 기록만 하고 미수정.
 - [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.
