@@ -232,12 +232,12 @@
 > 실사용 중 보고된 다섯 가지: (1) "전체 리서치 시작" 후 홈으로 와도 무한로딩, (2) 서버 로그 페이지 필요, (3) 섹션 상세에서 바로 다음/이전 섹션 이동, (4) 다운로드 시 엑셀 옵션, (5) 섹션 리서치 병렬화. 각 항목의 원인 분석과 설계 근거는 DESIGN.md §20.1~§20.5에 상세히 있으니 반드시 먼저 읽을 것 — 특히 §20.1은 코드로 확인한 사실과 "가장 유력한 추정"을 구분해서 적어뒀다.
 
 ### 17.1 무한로딩 원인 대응 (DESIGN.md §20.1)
-- [ ] `app/research.py`: `_configure_gpt_researcher()` 안에서 `gpt_researcher.retrievers.searx.searx` 모듈의 `requests.get`을 `functools.partial`로 `timeout=settings.request_timeout_seconds`가 기본 적용되도록 몽키패치. 모듈 전역 플래그로 idempotent하게 가드(여러 번 호출돼도 중복 패치 안 되게).
-- [ ] `app/config.py`: `Settings`에 `section_timeout_seconds: float = 900`(env `SECTION_TIMEOUT_SECONDS`, 1~3600 검증) 추가.
-- [ ] `app/jobs.py`: `_research_one()`의 `research_section(...)` 호출을 `asyncio.wait_for(..., timeout=settings.section_timeout_seconds)`로 감싸기. 타임아웃 시 `storage.update_section(section_id, status="error")` 후 계속 진행(큐 전체를 막지 않음).
-- [ ] `app/static/app.js`: 공용 `api()` 헬퍼에 `AbortController` 기반 타임아웃(20초) 추가, 타임아웃 시 명확한 에러 토스트 표시.
-- [ ] 회귀 테스트: SearXNG 몽키패치가 `requests.get`에 타임아웃을 실제로 주입하는지, 반복 호출해도 한 번만 패치되는지 확인. `asyncio.wait_for` 타임아웃 시 섹션이 `error`로 남고 나머지 큐 처리가 계속되는지 확인(fake researcher factory로 인위적 지연 재현).
-- [ ] `.env.example`에 `SECTION_TIMEOUT_SECONDS` 추가.
+- [x] `app/research.py`: `_configure_gpt_researcher()` 안에서 `gpt_researcher.retrievers.searx.searx` 모듈의 `requests.get`을 `functools.partial`로 `timeout=settings.request_timeout_seconds`가 기본 적용되도록 몽키패치. 모듈 전역 플래그로 idempotent하게 가드(여러 번 호출돼도 중복 패치 안 되게).
+- [x] `app/config.py`: `Settings`에 `section_timeout_seconds: float = 900`(env `SECTION_TIMEOUT_SECONDS`, 1~3600 검증) 추가.
+- [x] `app/jobs.py`: `_research_one()`의 `research_section(...)` 호출을 `asyncio.wait_for(..., timeout=settings.section_timeout_seconds)`로 감싸기. 타임아웃 시 `storage.update_section(section_id, status="error")` 후 계속 진행(큐 전체를 막지 않음).
+- [x] `app/static/app.js`: 공용 `api()` 헬퍼에 `AbortController` 기반 타임아웃(20초) 추가, 타임아웃 시 명확한 에러 토스트 표시.
+- [x] 회귀 테스트: SearXNG 몽키패치가 `requests.get`에 타임아웃을 실제로 주입하는지, 반복 호출해도 한 번만 패치되는지 확인. `asyncio.wait_for` 타임아웃 시 섹션이 `error`로 남고 나머지 큐 처리가 계속되는지 확인(fake researcher factory로 인위적 지연 재현).
+- [x] `.env.example`에 `SECTION_TIMEOUT_SECONDS` 추가.
 
 ### 17.2 서버 로그 페이지 (DESIGN.md §20.2)
 - [ ] `app/logs.py` 신규: `InMemoryLogHandler(logging.Handler)`가 `collections.deque(maxlen=1000)`에 `{id, timestamp, level, logger, message}` 저장, `id`는 단조 증가.

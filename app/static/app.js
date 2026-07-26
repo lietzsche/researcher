@@ -1,6 +1,7 @@
 const appRoot = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 let pollTimer = null;
+const API_TIMEOUT_MS = 20000;
 
 const statusLabels = {
   pending: "대기",
@@ -31,26 +32,40 @@ function notify(message, isError = false) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers,
-    },
-    ...options,
-  });
-  if (!response.ok) {
-    let detail = `${response.status} ${response.statusText}`;
-    try {
-      const payload = await response.json();
-      detail = payload.detail || detail;
-    } catch {
-      // Preserve the HTTP status when the response has no JSON body.
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const response = await fetch(path, {
+      credentials: "same-origin",
+      ...options,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      let detail = `${response.status} ${response.statusText}`;
+      try {
+        const payload = await response.json();
+        detail = payload.detail || detail;
+      } catch {
+        // Preserve the HTTP status when the response has no JSON body.
+      }
+      throw new Error(detail);
     }
-    throw new Error(detail);
+    if (response.status === 204) return null;
+    return response.json();
+  } catch (error) {
+    if (error.name === "AbortError") {
+      const message = "서버 응답이 지연되고 있습니다. 잠시 후 다시 시도하세요.";
+      notify(message, true);
+      throw new Error(message);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-  if (response.status === 204) return null;
-  return response.json();
 }
 
 function stopPolling() {

@@ -125,12 +125,15 @@ class SerialJobQueue:
     async def _research_one(self, job: ResearchJob, section_id: str) -> None:
         storage = OutputStorage(self.settings.research_output_dir, job.topic)
         try:
-            await research_section(
-                job.topic,
-                section_id,
-                force=job.force,
-                output_root=self.settings.research_output_dir,
-                settings=self.settings,
+            await asyncio.wait_for(
+                research_section(
+                    job.topic,
+                    section_id,
+                    force=job.force,
+                    output_root=self.settings.research_output_dir,
+                    settings=self.settings,
+                ),
+                timeout=self.settings.section_timeout_seconds,
             )
         except BaseException:
             try:

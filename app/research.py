@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -24,10 +25,25 @@ class Researcher(Protocol):
 
 ResearcherFactory = Callable[..., Researcher]
 _SOURCE_LINK = re.compile(r"^- \[(?P<title>.+?)]\((?P<url>https?://[^)]+)\)$", re.MULTILINE)
+_SEARX_REQUEST_TIMEOUT_PATCHED = False
 
 
 def _configure_gpt_researcher(settings: Settings) -> None:
     """Bridge the public config names to GPT-Researcher's environment contract."""
+    global _SEARX_REQUEST_TIMEOUT_PATCHED
+    if not _SEARX_REQUEST_TIMEOUT_PATCHED:
+        from gpt_researcher.retrievers.searx import searx as searx_module
+
+        # The installed retriever omits a timeout on this requests.get call.
+        # Apply a narrow, idempotent boundary patch without replacing its
+        # search behavior. This is a confirmed defect; whether it caused the
+        # reported production hang remains the leading hypothesis, not proof.
+        searx_module.requests.get = partial(
+            searx_module.requests.get,
+            timeout=settings.request_timeout_seconds,
+        )
+        _SEARX_REQUEST_TIMEOUT_PATCHED = True
+
     # GPT-Researcher 0.16 calls its SearXNG retriever "searx" and expects
     # SEARX_URL. Keep our DESIGN.md-facing names stable at the boundary.
     os.environ["RETRIEVER"] = "searx"

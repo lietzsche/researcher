@@ -27,6 +27,7 @@ class Settings(BaseModel):
     site_password: str | None = None
     research_output_dir: Path = Path("./outputs")
     request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    section_timeout_seconds: float = Field(default=900.0, ge=1, le=3600)
     require_api_key: bool = True
 
     @model_validator(mode="after")
@@ -84,6 +85,7 @@ def load_settings(
             os.getenv("RESEARCH_OUTPUT_DIR", "./outputs")
         ),
         "request_timeout_seconds": os.getenv("REQUEST_TIMEOUT_SECONDS", "30"),
+        "section_timeout_seconds": os.getenv("SECTION_TIMEOUT_SECONDS", "900"),
         "require_api_key": require_api_key,
     }
     try:

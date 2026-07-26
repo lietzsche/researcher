@@ -341,3 +341,43 @@ async def test_job_queue_never_runs_research_in_parallel(
     assert [
         section["status"] for section in storage.load_manifest()["sections"]
     ] == ["done", "done"]
+
+
+@pytest.mark.asyncio
+async def test_job_queue_timeout_marks_error_and_processes_next_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = OutputStorage(tmp_path, "Timeout Topic")
+    sections = [
+        {"id": "01", "title": "Hangs"},
+        {"id": "02", "title": "Continues"},
+    ]
+    storage.write_json(storage.toc_json_path, sections)
+    storage.initialize_manifest(depth="standard", sections=sections)
+
+    async def fake_research(
+        topic: str,
+        section_id: str,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        if section_id == "01":
+            await asyncio.sleep(1)
+        storage.update_section(section_id, status="done")
+        return {}
+
+    monkeypatch.setattr(jobs_module, "research_section", fake_research)
+    settings = Settings(require_api_key=False, research_output_dir=tmp_path)
+    settings.section_timeout_seconds = 0.01
+    queue = SerialJobQueue(settings)
+    await queue.start()
+    try:
+        await queue.enqueue_section("Timeout Topic", "01")
+        await queue.enqueue_section("Timeout Topic", "02")
+        await queue.join()
+    finally:
+        await queue.stop()
+
+    assert [
+        section["status"] for section in storage.load_manifest()["sections"]
+    ] == ["error", "done"]

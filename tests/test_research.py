@@ -1,10 +1,12 @@
 import os
+from functools import partial
 from pathlib import Path
 
 import httpx
 import pytest
 import respx
 
+import app.research as research_module
 from app.config import Settings, load_settings
 from app.research import (
     _configure_gpt_researcher,
@@ -75,6 +77,48 @@ def test_config_loads_output_language_from_environment(
     )
 
     assert settings.output_language == "Japanese"
+
+
+def test_config_loads_section_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SECTION_TIMEOUT_SECONDS", "120")
+
+    settings = load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    )
+
+    assert settings.section_timeout_seconds == 120
+
+
+def test_configure_gpt_researcher_patches_searx_timeout_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gpt_researcher.retrievers.searx import searx as searx_module
+
+    calls: list[dict[str, object]] = []
+
+    def fake_get(*_args: object, **kwargs: object) -> object:
+        calls.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(research_module, "_SEARX_REQUEST_TIMEOUT_PATCHED", False)
+    monkeypatch.setattr(searx_module.requests, "get", fake_get)
+    settings = Settings(
+        require_api_key=False,
+        request_timeout_seconds=17,
+    )
+
+    _configure_gpt_researcher(settings)
+    patched_get = searx_module.requests.get
+    _configure_gpt_researcher(settings)
+
+    assert isinstance(patched_get, partial)
+    assert searx_module.requests.get is patched_get
+    patched_get("http://searx.test/search")
+    assert calls == [{"timeout": 17}]
 
 
 def test_configure_gpt_researcher_uses_native_deepseek_provider(
