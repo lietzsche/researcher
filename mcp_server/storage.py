@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-_SAFE_SLUG = re.compile(r"[^a-z0-9]+")
+_SAFE_SLUG = re.compile(r"[^\w]+", re.UNICODE)
 _SAFE_SECTION_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -22,12 +22,16 @@ def utc_now() -> str:
 
 
 def slugify(value: str, *, fallback_prefix: str = "topic") -> str:
-    """Convert arbitrary user text to a filesystem-safe, stable slug."""
-    normalized = unicodedata.normalize("NFKD", value)
-    ascii_value = normalized.encode("ascii", "ignore").decode("ascii").lower()
-    slug = _SAFE_SLUG.sub("-", ascii_value).strip("-")
+    """Convert arbitrary user text to a filesystem-safe, stable slug.
+
+    Keeps non-Latin scripts (Korean, etc.) readable instead of collapsing to
+    an opaque hash: only ASCII round-tripped to nothing under NFKD+encode
+    (e.g. punctuation-only input) falls back to the hash below.
+    """
+    normalized = unicodedata.normalize("NFC", value).lower()
+    slug = _SAFE_SLUG.sub("-", normalized).strip("-_")
     if slug:
-        return slug[:80].rstrip("-")
+        return slug[:80].strip("-_")
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
     return f"{fallback_prefix}-{digest}"
 

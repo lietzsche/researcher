@@ -63,6 +63,21 @@ def test_configure_gpt_researcher_uses_native_deepseek_provider(
     assert os.environ["DEEPSEEK_API_KEY"] == "test-deepseek-key"
 
 
+def test_configure_gpt_researcher_defaults_to_keyless_local_embedding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GPT-Researcher's Memory always builds an embedding client, and its own
+    # default provider is "openai:...", which raises OpenAIError when only
+    # DEEPSEEK_API_KEY/ANTHROPIC_API_KEY is configured. Confirm we override it
+    # with a provider that needs no API key.
+    monkeypatch.delenv("EMBEDDING", raising=False)
+    settings = Settings(deepseek_api_key="test-deepseek-key")
+
+    _configure_gpt_researcher(settings)
+
+    assert os.environ["EMBEDDING"] == "huggingface:sentence-transformers/all-MiniLM-L6-v2"
+
+
 @respx.mock
 @pytest.mark.asyncio
 async def test_quick_search_uses_searxng_json_api() -> None:

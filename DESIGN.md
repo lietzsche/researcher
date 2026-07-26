@@ -152,6 +152,12 @@ STRATEGIC_LLM=deepseek:deepseek-v4-pro
 # ANTHROPIC_API_KEY=...
 # OPENAI_API_KEY=...
 
+# GPT-Researcher는 검색 결과 유사도 계산에 항상 임베딩 클라이언트를 만든다.
+# 자체 기본값(openai:...)을 그대로 두면 DeepSeek/Anthropic만 있는 설정에서도
+# OPENAI_API_KEY가 없다고 즉시 에러가 난다 (실사용 검증 중 발견). 로컬/무료인
+# huggingface 프로바이더로 고정해 별도 키 없이 동작하게 한다.
+EMBEDDING=huggingface:sentence-transformers/all-MiniLM-L6-v2
+
 RETRIEVER=searxng
 SEARXNG_URL=http://localhost:8080
 
@@ -183,6 +189,7 @@ args = ["/path/to/researcher/mcp_server/server.py"]
 - **API 비용**: 섹션마다 별도 리서치 패스라 토큰 비용이 단일 리포트 방식보다 큼 → `depth`/`num_sections`로 사용자가 예산 조절, DeepSeek 전환(12장)으로 단가 자체도 낮춤.
 - **SearXNG 크롤링 차단**: 일부 사이트가 차단할 수 있음 → GPT-Researcher의 재시도/폴백 로직 활용.
 - **동시 실행**: 1차 구현은 단순 순차 처리, 이후 필요시 섹션 병렬화 고려.
+- **검색 실패의 조용한 무시**: SearXNG가 특정 섹션에 대해 빈 결과만 반환하면 GPT-Researcher는 오류 대신 "소스를 찾지 못했다"는 문구를 담은 리포트를 정상 반환하고, 현재 `research_section`은 이를 그대로 `done`으로 저장한다 (실사용 검증 중 발견, 아직 미수정). 결과 품질이 이상하면 `manifest.json`의 `source_count`가 0인 섹션이 있는지 확인할 것 — 향후 `source_count == 0`을 에러로 취급할지 여부는 별도 결정 필요.
 
 ## 11. MCP와 LLM API 키의 관계 (자주 헷갈리는 부분)
 

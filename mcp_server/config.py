@@ -16,6 +16,11 @@ class Settings(BaseModel):
     fast_llm: str = "deepseek:deepseek-v4-flash"
     smart_llm: str = "deepseek:deepseek-v4-flash"
     strategic_llm: str = "deepseek:deepseek-v4-pro"
+    # GPT-Researcher's Memory always instantiates an embedding client, and its
+    # own default ("openai:...") requires OPENAI_API_KEY even when every LLM
+    # call is routed elsewhere. Default to a local, keyless provider so a
+    # DeepSeek-only (or Anthropic-only) setup doesn't hard-fail on embeddings.
+    embedding: str = "huggingface:sentence-transformers/all-MiniLM-L6-v2"
     retriever: str = "searxng"
     searxng_url: HttpUrl = HttpUrl("http://localhost:8080")
     mcp_server_name: str = "deep-research"
@@ -57,7 +62,17 @@ def load_settings(
         "strategic_llm": os.getenv(
             "STRATEGIC_LLM", Settings.model_fields["strategic_llm"].default
         ),
-        "retriever": os.getenv("RETRIEVER", "searxng"),
+        "embedding": os.getenv(
+            "EMBEDDING", Settings.model_fields["embedding"].default
+        ),
+        # Fixed, not read from os.environ["RETRIEVER"]: _configure_gpt_researcher
+        # overwrites that same env var with GPT-Researcher's internal retriever
+        # name ("searx") as a side effect, which would make every load_settings()
+        # call after the first one in a long-lived process see "searx" and fail
+        # this field's "must be searxng" validation. This field only exists to
+        # assert the local-only design invariant, so it is never meant to be
+        # user-configurable via the environment.
+        "retriever": "searxng",
         "searxng_url": os.getenv("SEARXNG_URL", "http://localhost:8080"),
         "mcp_server_name": os.getenv("MCP_SERVER_NAME", "deep-research"),
         "research_output_dir": Path(

@@ -35,6 +35,7 @@ def _configure_gpt_researcher(settings: Settings) -> None:
     os.environ["FAST_LLM"] = settings.fast_llm
     os.environ["SMART_LLM"] = settings.smart_llm
     os.environ["STRATEGIC_LLM"] = settings.strategic_llm
+    os.environ["EMBEDDING"] = settings.embedding
     if settings.deepseek_api_key:
         # GPT-Researcher 0.16 natively parses `deepseek:<model>` and builds a
         # ChatOpenAI client against https://api.deepseek.com. No compatibility

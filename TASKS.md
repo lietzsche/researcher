@@ -79,7 +79,7 @@
 ---
 
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
-- [ ] 구현 코드 리뷰 (`/code-review`)
-- [ ] 실사용 검증 (실제 과목/주제로 `build_study_document` 끝까지 실행해 결과물 품질 확인)
-- [ ] `docs/setup.md` 사용법 문서 작성
+- [x] 구현 코드 리뷰 — 발견한 4건(전부 심각도 높음)을 직접 수정: `gpt-researcher` 0.16.0 import 버그 → 버전 상한 고정, DeepSeek-only 설정에서 임베딩 때문에 죽는 문제 → `EMBEDDING` 기본값 추가, `RETRIEVER` 환경변수 충돌로 2섹션 이상 `build_study_document`가 항상 실패하던 버그 → 수정, 한글 주제가 해시 폴더명으로 뭉개지던 `slugify` 버그 → 수정. 낮은 우선순위 2건(SearXNG 빈 검색 결과 조용히 통과, `SEARXNG_SECRET` 무효)은 DESIGN.md/docs/setup.md에 기록만 하고 미수정.
+- [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.
+- [x] `docs/setup.md` 사용법 문서 작성
 - [ ] (향후, 별도 설계) 오디오 오버뷰 파이프라인 설계
