@@ -118,12 +118,12 @@
 - [x] DeepSeek/Anthropic/OpenAI/임베딩/gpt-researcher 버전 핀 관련 필드·검증은 전부 그대로 유지 (건드리지 말 것)
 
 ### 12.3 FastAPI 앱 (`app/main.py`, 신규)
-- [ ] DESIGN.md §7 표의 8개 라우트 구현: `POST /api/topics`, `GET /api/topics`, `GET /api/topics/{slug}`, `POST /api/topics/{slug}/sections/{section_id}/research`, `POST /api/topics/{slug}/build`, `GET /api/topics/{slug}/document`, `GET /api/topics/{slug}/download`, `DELETE /api/topics/{slug}`
-- [ ] `POST .../research`, `POST .../build`는 즉시 202를 반환하고 실제 작업은 `app/jobs.py`의 큐에 등록 (아래 12.4)
-- [ ] `GET /api/topics`는 `outputs/` 디렉터리를 스캔해서 각 주제의 manifest 요약(진행률, 생성일 등) 반환
-- [ ] `SITE_PASSWORD`가 설정돼 있으면 모든 `/api/*` 라우트와 정적 프론트엔드에 FastAPI `HTTPBasic` + `secrets.compare_digest`로 인증 적용 (DESIGN.md §12)
-- [ ] 정적 프론트엔드(`app/static/`)를 FastAPI `StaticFiles`로 서빙
-- [ ] 존재하지 않는 `slug` 요청 시 404, 진행 중인 섹션에 중복 리서치 요청 시 409 등 명확한 에러 응답
+- [x] DESIGN.md §7 표의 8개 라우트 구현: `POST /api/topics`, `GET /api/topics`, `GET /api/topics/{slug}`, `POST /api/topics/{slug}/sections/{section_id}/research`, `POST /api/topics/{slug}/build`, `GET /api/topics/{slug}/document`, `GET /api/topics/{slug}/download`, `DELETE /api/topics/{slug}`
+- [x] `POST .../research`, `POST .../build`는 즉시 202를 반환하고 실제 작업은 `app/jobs.py`의 큐에 등록 (아래 12.4)
+- [x] `GET /api/topics`는 `outputs/` 디렉터리를 스캔해서 각 주제의 manifest 요약(진행률, 생성일 등) 반환
+- [x] `SITE_PASSWORD`가 설정돼 있으면 모든 `/api/*` 라우트와 정적 프론트엔드에 FastAPI `HTTPBasic` + `secrets.compare_digest`로 인증 적용 (DESIGN.md §12)
+- [x] 정적 프론트엔드(`app/static/`)를 FastAPI `StaticFiles`로 서빙
+- [x] 존재하지 않는 `slug` 요청 시 404, 진행 중인 섹션에 중복 리서치 요청 시 409 등 명확한 에러 응답
 
 ### 12.4 백그라운드 작업 큐 (`app/jobs.py`, 신규)
 - [ ] 프로세스 내 `asyncio` 기반 **직렬** 작업 큐 구현 (동시에 하나만 실행 — DESIGN.md §8 이유 참고: `_configure_gpt_researcher`의 `os.environ` 전역 변경이 병렬 실행 시 경쟁 상태를 만듦)
