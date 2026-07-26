@@ -155,6 +155,38 @@
 
 ---
 
+## Phase 13 — UI 개선 (DESIGN.md §17)
+
+> Phase 12 완료 후 실사용(모바일 포함)에서 발견된 4건. 설계 명세는 DESIGN.md §17 참고. 아래 순서대로 구현.
+
+### 13.1 [이 섹션만 리서치] 버튼 비활성화 (§17.1)
+- [ ] `app/static/app.js`: `renderToc()` 에서 manifest 로드 직후 `const isRunning = manifest.sections.some(s => s.status === "in_progress");` 설정
+- [ ] `tocSection(section, manifest, isRunning)` 시그니처에 `isRunning` 추가, `disabled` 조건을 `isRunning || state?.status === "in_progress" || state?.status === "done"` 으로 변경
+- [ ] `in_progress` 상태인 섹션의 버튼 텍스트를 "진행 중…" 으로 변경
+- [ ] `isRunning` 이면 [전체 리서치 시작] 버튼도 비활성화
+- [ ] `isRunning` 이면 TOC 화면도 3초 간격 폴링 시작, 화면 상단에 안내 문구 표시
+
+### 13.2 단일 섹션 결과 열람 (§17.2)
+- [ ] `app/main.py`: `GET /api/topics/{slug}/sections/{section_id}` 엔드포인트 추가 — 섹션 파일 내용을 `text/markdown; charset=utf-8` 로 반환, 미완료이거나 파일이 없으면 404
+- [ ] `app/static/app.js`: `statusRow()` 에서 `done` 상태 섹션에 [보기] 버튼 추가 (`href="#/topic/{slug}/section/{section_id}"`)
+- [ ] `app/static/app.js`: `renderSectionDocument(slug, sectionId)` 함수 구현, `route()` 에 `#/topic/{slug}/section/{section_id}` 라우트 추가
+
+### 13.3 다운로드 파일 인코딩 수정 (§17.3)
+- [ ] `app/main.py`: `download_document` 의 `media_type` 을 `"text/markdown; charset=utf-8"` 로 변경
+- [ ] `app/main.py`: `get_document` 의 `media_type` 도 `"text/markdown; charset=utf-8"` 로 변경
+- [ ] `app/main.py`: §13.2에서 추가하는 섹션 엔드포인트도 동일하게 charset 명시 (이미 위에서 명시)
+
+### 13.4 마크다운 렌더링 (§17.4)
+- [ ] `app/static/index.html`: `<head>` 에 marked.js CDN 스크립트 태그 추가
+- [ ] `app/static/app.js`: `renderDocument(slug)` 함수 구현 (fetch → `marked.parse()` → HTML 표시, [다운로드] + [← 돌아가기] 제공)
+- [ ] `app/static/app.js`: `route()` 에 `#/topic/{slug}/document` 라우트 추가
+- [ ] `app/static/app.js`: progress 화면의 [전체 문서 보기] 링크를 새 해시 라우트로 변경
+- [ ] `app/static/style.css`: `.prose` 타이포그래피 스타일 추가 (헤딩, 목록, 코드, 링크, 수평선, 행간)
+- [ ] §13.2의 `renderSectionDocument` 도 `.prose` 스타일과 `marked.parse()` 사용
+- [ ] `tests/test_api.py`: §13.2에서 추가한 섹션 엔드포인트 테스트 추가 (done 섹션 → 200, pending/없음 → 404)
+
+---
+
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
 - [x] 구현 코드 리뷰 — 발견한 4건(전부 심각도 높음)을 직접 수정: `gpt-researcher` 0.16.0 import 버그 → 버전 상한 고정, DeepSeek-only 설정에서 임베딩 때문에 죽는 문제 → `EMBEDDING` 기본값 추가, `RETRIEVER` 환경변수 충돌로 2섹션 이상 `build_study_document`가 항상 실패하던 버그 → 수정, 한글 주제가 해시 폴더명으로 뭉개지던 `slugify` 버그 → 수정. 낮은 우선순위 2건(SearXNG 빈 검색 결과 조용히 통과, `SEARXNG_SECRET` 무효)은 DESIGN.md/docs/setup.md에 기록만 하고 미수정.
 - [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.

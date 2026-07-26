@@ -265,6 +265,68 @@ codex가 헷갈리지 않도록 명시적으로 나열한다.
 
 **신규**: `app/main.py`, `app/jobs.py`, `app/static/*`, `Dockerfile`, `docker-compose.yml`의 `app`/`cloudflared` 서비스, `scripts/up.sh`/`down.sh`/`get-tunnel-url.sh`, `tests/test_api.py`.
 
+## 17. UI 개선 사항 (Phase 13 구현 대상)
+
+> 실사용(모바일 포함) 중 발견된 4건. 설계 명세를 아래에 정리하고 Phase 13에서 구현한다.
+
+### 17.1 [이 섹션만 리서치] 버튼 — 작업 진행 중 비활성화
+
+**현상**: TOC 화면에서 [전체 리서치 시작]이나 [이 섹션만 리서치]를 눌러 빌드가 큐에 들어간 상태에서 TOC 화면으로 돌아오면, 아직 `pending`인 섹션의 버튼이 활성화 상태로 남아있다.
+
+**원인**: `tocSection()`은 *해당 섹션 자체*가 `in_progress`이거나 `done`일 때만 비활성화한다. `pending` 섹션은 전체 빌드 큐에 이미 들어있더라도 매니페스트 상태가 여전히 `pending`이어서 버튼이 활성화된다. 클릭하면 중복 큐잉이 발생한다.
+
+**수정 명세 (`app/static/app.js`)**:
+- `renderToc()` 에서 manifest를 가져온 직후, `const isRunning = manifest.sections.some(s => s.status === "in_progress");` 플래그를 설정한다.
+- `tocSection(section, manifest, isRunning)` 시그니처에 `isRunning` 파라미터를 추가하고, `const disabled = isRunning || state?.status === "in_progress" || state?.status === "done";` 로 변경한다.
+- 섹션 자체가 `in_progress`일 때 버튼 텍스트를 `"진행 중…"` 으로 변경한다 (현재는 `"이 섹션만 리서치"` 그대로 표시됨).
+- `isRunning` 이면 [전체 리서치 시작] 버튼도 비활성화한다.
+- `isRunning` 이면 TOC 화면도 3초 간격 폴링을 시작해 섹션 상태 변화를 자동으로 반영한다. 화면 상단에 `"리서치가 진행 중입니다. 자동으로 갱신됩니다."` 안내 문구를 표시한다.
+
+### 17.2 단일 섹션 리서치 결과 열람
+
+**현상**: [이 섹션만 리서치]가 완료되어도 해당 섹션 내용을 볼 방법이 없다. 진행/상세 화면은 완성된 `study_document.md`가 있을 때만 [전체 문서 보기] / [다운로드]를 노출하는데, 단일 섹션 리서치는 `study_document.md`를 생성하지 않는다.
+
+**의도 확인**: 완전한 문서가 완성되기 전에도 섹션 단위 결과를 볼 수 있는 것이 맞다. 전체 문서 완성 후에만 볼 수 있게 제한한 것은 의도적 설계가 아님.
+
+**수정 명세**:
+- `app/main.py` — 새 엔드포인트 추가:
+  ```
+  GET /api/topics/{slug}/sections/{section_id}
+  ```
+  `storage.section_path(section_id)`로 파일 경로를 찾아 `PlainTextResponse`로 반환 (media_type `text/markdown; charset=utf-8`). 파일이 없거나 해당 섹션이 `done` 상태가 아니면 404.
+- `app/static/app.js` — `statusRow()`: `done` 상태 섹션에 [보기] 버튼 추가 (`href="#/topic/{slug}/section/{section_id}"`).
+- `app/static/app.js` — `renderSectionDocument(slug, sectionId)` 함수 구현, `route()` 에 `#/topic/{slug}/section/{section_id}` 라우트 추가. 마크다운 렌더링은 §17.4와 동일한 방식 사용.
+
+### 17.3 다운로드 파일 한국어 인코딩 깨짐
+
+**현상**: 모바일에서 다운로드한 `.md` 파일을 열면 한국어가 깨진다.
+
+**원인**: `download_document` 엔드포인트가 `media_type="text/markdown"` 만 지정하고 `charset`을 명시하지 않는다. 파일 자체는 UTF-8로 저장되어 있지만 Content-Type 헤더에 charset 정보가 없어서 일부 모바일 앱이 시스템 기본 인코딩으로 해석한다.
+
+**수정 명세 (`app/main.py`)**:
+- `download_document` 엔드포인트: `media_type="text/markdown; charset=utf-8"` 으로 변경.
+- `get_document` 엔드포인트 (PlainTextResponse): 마찬가지로 `media_type="text/markdown; charset=utf-8"` 로 변경.
+- §17.2에서 추가하는 `GET /api/topics/{slug}/sections/{section_id}` 도 동일하게 charset 명시.
+
+### 17.4 전체 문서 마크다운 렌더링
+
+**현상**: [전체 문서 보기] 버튼이 `/api/topics/{slug}/document`를 새 탭에서 열어 raw 마크다운 텍스트를 그대로 노출한다. `#`, `**` 등 기호가 날것으로 보여 읽기 어렵다.
+
+**수정 명세**:
+- `app/static/index.html`: `<head>` 에 marked.js CDN 스크립트 추가.
+  ```html
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  ```
+- `app/static/app.js`:
+  - `renderDocument(slug)` 함수 구현: `GET /api/topics/{slug}/document` 로 텍스트를 fetch한 뒤 `marked.parse(text)` 로 HTML로 변환해 표시. [다운로드] 버튼과 [← 돌아가기] 링크도 함께 제공.
+  - `route()` 에 `#/topic/{slug}/document` 해시 라우트 추가.
+  - progress 화면의 [전체 문서 보기] 링크를 `href="/api/topics/..."` (새 탭)에서 `href="#/topic/{slug}/document"` 로 변경.
+- `app/static/style.css`: `.prose` 클래스에 타이포그래피 스타일 추가 — 헤딩 크기/여백, 목록 들여쓰기, `<code>` 배경색, 링크 색상, 수평선, 충분한 행간.
+- 빌드 툴체인 없는 순수 HTML/CSS/바닐라 JS 원칙(§9) 유지 — CDN 스크립트 태그 하나로 해결.
+- §17.2의 `renderSectionDocument`도 동일한 `.prose` 스타일과 marked.js 렌더러 사용.
+
+---
+
 ## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
 
 - 구현 완료 후 코드 리뷰.
