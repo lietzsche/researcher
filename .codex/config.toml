@@ -1,6 +1,0 @@
-[mcp_servers.deep-research]
-command = "bash"
-args = [
-  "-lc",
-  'root="$(git rev-parse --show-toplevel)" && exec "$root/.venv/bin/python" "$root/mcp_server/server.py"',
-]
