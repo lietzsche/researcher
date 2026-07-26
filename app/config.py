@@ -28,6 +28,7 @@ class Settings(BaseModel):
     research_output_dir: Path = Path("./outputs")
     request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     section_timeout_seconds: float = Field(default=900.0, ge=1, le=3600)
+    max_concurrent_research: int = Field(default=2, ge=1, le=5)
     require_api_key: bool = True
 
     @model_validator(mode="after")
@@ -86,6 +87,7 @@ def load_settings(
         ),
         "request_timeout_seconds": os.getenv("REQUEST_TIMEOUT_SECONDS", "30"),
         "section_timeout_seconds": os.getenv("SECTION_TIMEOUT_SECONDS", "900"),
+        "max_concurrent_research": os.getenv("MAX_CONCURRENT_RESEARCH", "2"),
         "require_api_key": require_api_key,
     }
     try:

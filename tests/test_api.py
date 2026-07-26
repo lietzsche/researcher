@@ -410,3 +410,114 @@ async def test_job_queue_timeout_marks_error_and_processes_next_job(
     assert [
         section["status"] for section in storage.load_manifest()["sections"]
     ] == ["error", "done"]
+
+
+@pytest.mark.asyncio
+async def test_build_researches_with_configured_concurrency_then_assembles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = OutputStorage(tmp_path, "Parallel Build")
+    sections = [
+        {"id": f"{index:02d}", "title": f"Section {index}"}
+        for index in range(1, 5)
+    ]
+    storage.write_json(storage.toc_json_path, sections)
+    storage.initialize_manifest(depth="standard", sections=sections)
+    active = 0
+    maximum_active = 0
+    assembled: list[str] = []
+
+    async def fake_research(
+        topic: str,
+        section_id: str,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        try:
+            await asyncio.sleep(0.02)
+            storage.update_section(section_id, status="done")
+            return {}
+        finally:
+            active -= 1
+
+    def fake_assemble(topic: str, **_kwargs: Any) -> dict[str, Any]:
+        assembled.append(topic)
+        return {}
+
+    monkeypatch.setattr(jobs_module, "research_section", fake_research)
+    monkeypatch.setattr(jobs_module, "assemble_study_document", fake_assemble)
+    queue = SerialJobQueue(
+        Settings(
+            require_api_key=False,
+            research_output_dir=tmp_path,
+            max_concurrent_research=2,
+        )
+    )
+    await queue.start()
+    try:
+        await queue.enqueue_build("Parallel Build")
+        await queue.join()
+    finally:
+        await queue.stop()
+
+    assert maximum_active == 2
+    assert [
+        section["status"] for section in storage.load_manifest()["sections"]
+    ] == ["done", "done", "done", "done"]
+    assert assembled == ["Parallel Build"]
+
+
+@pytest.mark.asyncio
+async def test_build_continues_after_failure_and_skips_assembly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    storage = OutputStorage(tmp_path, "Partial Failure")
+    sections = [
+        {"id": f"{index:02d}", "title": f"Section {index}"}
+        for index in range(1, 4)
+    ]
+    storage.write_json(storage.toc_json_path, sections)
+    storage.initialize_manifest(depth="standard", sections=sections)
+    assembled: list[str] = []
+
+    async def fake_research(
+        topic: str,
+        section_id: str,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        await asyncio.sleep(0.01)
+        if section_id == "02":
+            raise RuntimeError("deliberate section failure")
+        storage.update_section(section_id, status="done")
+        return {}
+
+    def fake_assemble(topic: str, **_kwargs: Any) -> dict[str, Any]:
+        assembled.append(topic)
+        return {}
+
+    monkeypatch.setattr(jobs_module, "research_section", fake_research)
+    monkeypatch.setattr(jobs_module, "assemble_study_document", fake_assemble)
+    queue = SerialJobQueue(
+        Settings(
+            require_api_key=False,
+            research_output_dir=tmp_path,
+            max_concurrent_research=2,
+        )
+    )
+    await queue.start()
+    try:
+        await queue.enqueue_build("Partial Failure")
+        await queue.join()
+    finally:
+        await queue.stop()
+
+    assert [
+        section["status"] for section in storage.load_manifest()["sections"]
+    ] == ["done", "error", "done"]
+    assert assembled == []
+    assert "Skipping document assembly" in caplog.text

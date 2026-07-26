@@ -93,6 +93,26 @@ def test_config_loads_section_timeout(
     assert settings.section_timeout_seconds == 120
 
 
+def test_config_loads_max_concurrent_research(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MAX_CONCURRENT_RESEARCH", "4")
+
+    settings = load_settings(
+        require_api_key=False,
+        env_file=tmp_path / "missing.env",
+    )
+
+    assert settings.max_concurrent_research == 4
+
+
+@pytest.mark.parametrize("value", [0, 6])
+def test_config_rejects_out_of_range_research_concurrency(value: int) -> None:
+    with pytest.raises(ValueError):
+        Settings(require_api_key=False, max_concurrent_research=value)
+
+
 def test_configure_gpt_researcher_patches_searx_timeout_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

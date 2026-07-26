@@ -148,13 +148,43 @@ class SerialJobQueue:
 
     async def _run_build(self, job: ResearchJob) -> None:
         storage = OutputStorage(self.settings.research_output_dir, job.topic)
-        for index, section_id in enumerate(job.section_ids):
-            try:
+        semaphore = asyncio.Semaphore(self.settings.max_concurrent_research)
+
+        async def research_with_limit(section_id: str) -> None:
+            async with semaphore:
                 await self._research_one(job, section_id)
-            except BaseException:
-                for remaining_id in job.section_ids[index + 1 :]:
-                    storage.update_section(remaining_id, status="pending")
-                raise
+
+        results = await asyncio.gather(
+            *(research_with_limit(section_id) for section_id in job.section_ids),
+            return_exceptions=True,
+        )
+        for section_id, result in zip(job.section_ids, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.error(
+                    "Research failed for section %s in topic %r: %s",
+                    section_id,
+                    job.topic,
+                    result,
+                )
+
+        manifest = storage.load_manifest()
+        statuses = {
+            str(section.get("id")): section.get("status")
+            for section in manifest.get("sections", [])
+        }
+        failed_ids = [
+            section_id
+            for section_id in job.section_ids
+            if statuses.get(section_id) != "done"
+        ]
+        if failed_ids:
+            logger.error(
+                "Skipping document assembly for topic %r; sections not done: %s",
+                job.topic,
+                ", ".join(failed_ids),
+            )
+            return
+
         assemble_study_document(
             job.topic,
             output_root=self.settings.research_output_dir,

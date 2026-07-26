@@ -259,12 +259,12 @@
 - [x] 테스트: `format=excel` 응답이 유효한 xlsx인지(openpyxl로 다시 읽어 시트/셀 값 검증), `format` 생략/`markdown` 시 기존 동작 그대로인지.
 
 ### 17.5 섹션 리서치 병렬화 (DESIGN.md §20.5)
-- [ ] `app/config.py`에 `max_concurrent_research: int = 2`(env `MAX_CONCURRENT_RESEARCH`, 1~5 검증) 추가.
-- [ ] `app/jobs.py`의 `_run_build()`를 순차 `for` 루프 대신 `asyncio.Semaphore(settings.max_concurrent_research)`로 동시 실행 수를 제한한 `asyncio.gather(..., return_exceptions=True)`로 변경. 하나가 실패해도 나머지는 계속 진행(취소하지 않음).
-- [ ] 조립 조건 변경: 모든 섹션이 끝난 뒤 매니페스트를 다시 읽어 대상 섹션 전부가 `done`일 때만 `assemble_study_document` 호출, 하나라도 `error`면 조립 건너뛰고 로그에 남김.
-- [ ] 개별 "이 섹션만 리서치" 트리거는 건드리지 말 것 — 이번 병렬화는 build 전용.
-- [ ] 회귀 테스트: 여러 섹션을 동시에(가짜 지연이 있는 fake researcher factory로) 빌드했을 때 매니페스트 상태가 서로 덮어쓰지 않고 전부 정확히 반영되는지, 동시 실행 수가 `max_concurrent_research`를 넘지 않는지(세마포어로 카운팅), 일부 실패 시 조립이 스킵되는지, 전부 성공 시 조립되는지.
-- [ ] `.env.example`에 `MAX_CONCURRENT_RESEARCH` 추가.
+- [x] `app/config.py`에 `max_concurrent_research: int = 2`(env `MAX_CONCURRENT_RESEARCH`, 1~5 검증) 추가.
+- [x] `app/jobs.py`의 `_run_build()`를 순차 `for` 루프 대신 `asyncio.Semaphore(settings.max_concurrent_research)`로 동시 실행 수를 제한한 `asyncio.gather(..., return_exceptions=True)`로 변경. 하나가 실패해도 나머지는 계속 진행(취소하지 않음).
+- [x] 조립 조건 변경: 모든 섹션이 끝난 뒤 매니페스트를 다시 읽어 대상 섹션 전부가 `done`일 때만 `assemble_study_document` 호출, 하나라도 `error`면 조립 건너뛰고 로그에 남김.
+- [x] 개별 "이 섹션만 리서치" 트리거는 건드리지 말 것 — 이번 병렬화는 build 전용.
+- [x] 회귀 테스트: 여러 섹션을 동시에(가짜 지연이 있는 fake researcher factory로) 빌드했을 때 매니페스트 상태가 서로 덮어쓰지 않고 전부 정확히 반영되는지, 동시 실행 수가 `max_concurrent_research`를 넘지 않는지(세마포어로 카운팅), 일부 실패 시 조립이 스킵되는지, 전부 성공 시 조립되는지.
+- [x] `.env.example`에 `MAX_CONCURRENT_RESEARCH` 추가.
 
 ### 공통
 - [ ] `docs/setup.md`에 새 환경변수(`SECTION_TIMEOUT_SECONDS`, `MAX_CONCURRENT_RESEARCH`), 로그 페이지 사용법, 엑셀 다운로드 옵션, 섹션 상세 다음/이전 이동 안내 추가.
