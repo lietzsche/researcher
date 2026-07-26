@@ -175,7 +175,10 @@ def test_all_topic_routes(api_client: tuple[TestClient, FakeQueue, Settings]) ->
     assert excel_download.headers["content-type"] == (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    assert f'filename="{slug}.xlsx"' in excel_download.headers["content-disposition"]
+    assert (
+        f"filename*=utf-8''{slug}.xlsx"
+        in excel_download.headers["content-disposition"]
+    )
     workbook = load_workbook(BytesIO(excel_download.content))
     assert workbook.sheetnames == ["목차", "본문", "출처"]
     assert workbook["목차"]["B2"].value == "Section 1"
@@ -184,12 +187,52 @@ def test_all_topic_routes(api_client: tuple[TestClient, FakeQueue, Settings]) ->
     assert workbook["출처"]["B2"].value == "Example source"
     assert workbook["출처"]["C2"].value == "https://example.com/source"
 
+    zip_download = client.get(f"/api/topics/{slug}/download?format=zip")
+    assert zip_download.status_code == 200
+    assert zip_download.headers["content-type"] == "application/zip"
+    assert (
+        f"filename*=utf-8''{slug}.zip" in zip_download.headers["content-disposition"]
+    )
+
     assert client.get(f"/api/topics/{slug}/download?format=pdf").status_code == 422
 
     deleted = client.delete(f"/api/topics/{slug}")
     assert deleted.status_code == 204
     assert not storage.topic_dir.exists()
     assert client.get(f"/api/topics/{slug}").status_code == 404
+
+
+def test_excel_and_zip_downloads_encode_korean_filenames(tmp_path: Path) -> None:
+    settings = Settings(require_api_key=False, research_output_dir=tmp_path)
+    storage = OutputStorage(tmp_path, "한글 주제")
+    sections = [{"id": "01", "title": "첫 장", "description": "설명"}]
+    storage.write_json(storage.toc_json_path, sections)
+    storage.write_text(storage.toc_markdown_path, "# 목차")
+    manifest = storage.initialize_manifest(depth="standard", sections=sections)
+    storage.write_text(
+        storage.topic_dir / manifest["sections"][0]["path"],
+        "# 첫 장\n\n본문",
+    )
+    storage.update_section("01", status="done")
+    storage.write_text(storage.study_document_path, "# 완성 문서")
+
+    with TestClient(create_app(settings=settings, job_queue=FakeQueue())) as client:
+        excel = client.get(f"/api/topics/{storage.topic_slug}/download?format=excel")
+        section_zip = client.get(
+            f"/api/topics/{storage.topic_slug}/download?format=zip"
+        )
+
+    assert excel.status_code == 200
+    assert (
+        excel.headers["content-disposition"]
+        == "attachment; filename*=utf-8''%ED%95%9C%EA%B8%80-%EC%A3%BC%EC%A0%9C.xlsx"
+    )
+    assert load_workbook(BytesIO(excel.content))["본문"]["B2"].value == "첫 장"
+    assert section_zip.status_code == 200
+    assert (
+        section_zip.headers["content-disposition"]
+        == "attachment; filename*=utf-8''%ED%95%9C%EA%B8%80-%EC%A3%BC%EC%A0%9C.zip"
+    )
 
 
 def test_api_reports_not_found_and_conflict(

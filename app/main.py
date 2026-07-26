@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, Protocol
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import (
@@ -22,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from app.config import Settings, load_settings
-from app.export import build_excel_workbook
+from app.export import build_excel_workbook, build_section_zip
 from app.jobs import SerialJobQueue
 from app.logs import InMemoryLogHandler
 from app.schemas import GenerateTocInput
@@ -330,11 +331,15 @@ def create_app(
     async def download_document(
         slug: str,
         request: Request,
-        format: Literal["markdown", "excel"] = "markdown",
+        format: Literal["markdown", "excel", "zip"] = "markdown",
     ) -> Response:
         storage = _topic_storage(_settings(request), slug)
         if not storage.study_document_path.is_file():
             raise HTTPException(status_code=404, detail="Study document not found")
+        if format in {"excel", "zip"}:
+            extension = "xlsx" if format == "excel" else "zip"
+            filename = quote(f"{slug}.{extension}")
+            content_disposition = f"attachment; filename*=utf-8''{filename}"
         if format == "excel":
             return StreamingResponse(
                 build_excel_workbook(storage.topic, storage),
@@ -342,9 +347,13 @@ def create_app(
                     "application/vnd.openxmlformats-officedocument."
                     "spreadsheetml.sheet"
                 ),
-                headers={
-                    "Content-Disposition": f'attachment; filename="{slug}.xlsx"'
-                },
+                headers={"Content-Disposition": content_disposition},
+            )
+        if format == "zip":
+            return StreamingResponse(
+                build_section_zip(storage.topic, storage),
+                media_type="application/zip",
+                headers={"Content-Disposition": content_disposition},
             )
         return FileResponse(
             storage.study_document_path,

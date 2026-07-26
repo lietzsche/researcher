@@ -206,7 +206,8 @@ function topicCard(topic) {
         ${
           topic.has_study_document
             ? `<a class="button button-small button-ghost" href="/api/topics/${slug}/download">다운로드 (MD)</a>
-               <a class="button button-small button-ghost" href="/api/topics/${slug}/download?format=excel">다운로드 (Excel)</a>`
+               <a class="button button-small button-ghost" href="/api/topics/${slug}/download?format=excel">다운로드 (Excel)</a>
+               <a class="button button-small button-ghost" href="/api/topics/${slug}/download?format=zip">다운로드 (섹션별 ZIP)</a>`
             : ""
         }
         <button class="button button-small button-danger" data-delete="${escapeHtml(topic.slug)}">삭제</button>
@@ -412,7 +413,8 @@ async function renderProgress(slug, isPoll = false) {
         hasDocument
           ? `<a class="button button-primary" href="#/topic/${encodeSlug(slug)}/document">전체 문서 보기</a>
              <a class="button button-ghost" href="/api/topics/${encodeSlug(slug)}/download">다운로드 (MD)</a>
-             <a class="button button-ghost" href="/api/topics/${encodeSlug(slug)}/download?format=excel">다운로드 (Excel)</a>`
+             <a class="button button-ghost" href="/api/topics/${encodeSlug(slug)}/download?format=excel">다운로드 (Excel)</a>
+             <a class="button button-ghost" href="/api/topics/${encodeSlug(slug)}/download?format=zip">다운로드 (섹션별 ZIP)</a>`
           : `<span class="muted">${running ? "완료될 때까지 자동으로 갱신합니다." : "전체 리서치를 시작하면 최종 문서가 조립됩니다."}</span>`
       }
       <button id="delete-topic" class="button button-danger" ${running ? "disabled" : ""}>주제 삭제</button>
@@ -474,6 +476,7 @@ async function renderDocument(slug) {
       <div class="footer-actions" style="margin-bottom:1rem">
         <a class="button button-ghost" href="/api/topics/${encodeSlug(slug)}/download">다운로드 (MD)</a>
         <a class="button button-ghost" href="/api/topics/${encodeSlug(slug)}/download?format=excel">다운로드 (Excel)</a>
+        <a class="button button-ghost" href="/api/topics/${encodeSlug(slug)}/download?format=zip">다운로드 (섹션별 ZIP)</a>
       </div>
       <article class="panel prose">${marked.parse(text)}</article>
     </section>`;
