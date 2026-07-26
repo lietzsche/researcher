@@ -149,11 +149,12 @@ def test_all_topic_routes(api_client: tuple[TestClient, FakeQueue, Settings]) ->
     document = client.get(f"/api/topics/{slug}/document")
     assert document.status_code == 200
     assert document.text == "# Finished document\n"
-    assert document.headers["content-type"].startswith("text/markdown")
+    assert document.headers["content-type"] == "text/markdown; charset=utf-8"
 
     download = client.get(f"/api/topics/{slug}/download")
     assert download.status_code == 200
     assert download.content == b"# Finished document\n"
+    assert download.headers["content-type"] == "text/markdown; charset=utf-8"
     assert "attachment" in download.headers["content-disposition"]
 
     deleted = client.delete(f"/api/topics/{slug}")
@@ -211,6 +212,32 @@ def test_research_section_rejects_redo_of_done_section_without_force(
     forced = client.post(f"/api/topics/{slug}/sections/01/research?force=true")
     assert forced.status_code == 202
     assert queue.section_jobs == [("Done Section Topic", "01", True)]
+
+
+def test_get_section_document_only_returns_completed_sections(
+    api_client: tuple[TestClient, FakeQueue, Settings],
+) -> None:
+    client, _, settings = api_client
+    created = client.post(
+        "/api/topics",
+        json={"topic": "Section Document Topic", "depth": "standard", "num_sections": 2},
+    )
+    slug = created.json()["manifest"]["topic_slug"]
+    storage = OutputStorage(settings.research_output_dir, "Section Document Topic")
+    manifest = storage.update_section("01", status="done")
+    completed_section = manifest["sections"][0]
+    storage.write_text(
+        storage.section_path("01", completed_section["title"]),
+        "# 완료된 섹션\n\n한국어 본문",
+    )
+
+    completed = client.get(f"/api/topics/{slug}/sections/01")
+    assert completed.status_code == 200
+    assert completed.text == "# 완료된 섹션\n\n한국어 본문\n"
+    assert completed.headers["content-type"] == "text/markdown; charset=utf-8"
+
+    assert client.get(f"/api/topics/{slug}/sections/02").status_code == 404
+    assert client.get(f"/api/topics/{slug}/sections/99").status_code == 404
 
 
 def test_basic_auth_protects_api_and_static_frontend(tmp_path: Path) -> None:
