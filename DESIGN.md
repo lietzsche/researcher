@@ -410,10 +410,54 @@ codex가 헷갈리지 않도록 명시적으로 나열한다.
 
 ---
 
+## 19. 섹션 파일 조회를 title 재계산 대신 manifest의 path로 통일 (Phase 16 구현 대상)
+
+**현상**: 실사용 중 섹션 하나가 `done` 상태인데도 `GET /api/topics/{slug}/sections/{id}`가 404를 반환했다. 조사해보니 `manifest.json`과 `toc.json`이 그 섹션 제목을 `"러스트와 리눅스 소개"`로 일관되게 기록하고 있는데, 실제 디스크의 파일은 `01-개발-환경-설정.md`(다른 제목)이었다.
+
+**원인 불확정**: 정확히 왜 제목과 파일이 어긋났는지는 로그 없이 확정하지 못했다 — 사용자는 `toc.json`을 직접 수정한 적이 없다고 확인했다. 재발 시 원인을 확정할 수 있도록 `docker compose logs app`을 남겨두는 걸 권장한다(이번엔 확보 못함). 다만 원인이 무엇이든 **코드에 구조적 취약점이 있다는 건 확인됐다**: 시스템이 섹션 파일을 찾을 때마다 "지금 이 순간의 title"을 슬러그화해서 파일명을 매번 재계산하는데, title이 (이유를 막론하고) 파일이 만들어진 시점과 조회 시점 사이에 조금이라도 달라지면 파일을 못 찾는다.
+
+**근본 취약점**: 세 곳이 각각 독립적으로 title → 파일명을 재계산한다.
+- `app/research.py:142` — `toc.json`의 title로 재계산
+- `app/main.py:296` — `manifest.json`의 title로 재계산
+- `app/assemble.py:64` — `toc.json`의 title로 재계산
+
+그런데 `manifest.json`은 이미 각 섹션마다 `path` 필드를 갖고 있다 (`storage.initialize_manifest()`가 TOC 생성 시점에 한 번 계산해서 저장하고, 이후 `update_section()`은 이 필드를 절대 건드리지 않는다 — 코드로 확인함). 즉 "이 섹션의 파일이 어디 있는가"에 대한 **단일하고 안정적인 정답**이 이미 존재하는데, 세 곳 모두 이걸 쓰지 않고 title로부터 매번 다시 계산하고 있다. title이 무슨 이유로든(수동 편집, 알 수 없는 경쟁 상태, 향후 생길 수 있는 다른 버그) 조회 시점에 달라지면 이 재계산이 깨지고, 파일은 멀쩡히 있어도 못 찾는다.
+
+**설계**: 세 곳 전부 title 재계산을 버리고 `manifest.json`에 저장된 `path`를 그대로 신뢰한다.
+
+### 19.1 `research_section()` (`app/research.py`)
+- 142번 줄 `section_path = storage.section_path(section_id, section["title"])` →
+  `section_path = storage.topic_dir / manifest_section["path"]`로 변경.
+- `section`(toc.json에서 읽은 것)은 콘텐츠 생성용 컨텍스트(제목/설명/하위섹션)로는 계속 쓰되, **파일 경로 계산에는 더 이상 쓰지 않는다.**
+
+### 19.2 `get_section_document` (`app/main.py`)
+- 296번 줄 `section_path = storage.section_path(section_id, str(section.get("title", "")))` →
+  `section_path = storage.topic_dir / str(section.get("path", ""))`로 변경.
+- `section`은 이미 `manifest.json`에서 읽은 dict이므로 그 안의 `path`를 바로 쓰면 된다.
+
+### 19.3 `assemble_study_document()` (`app/assemble.py`)
+- 64번 줄 `section_path = storage.section_path(section_id, section["title"])` →
+  이미 조회해둔 `manifest_sections[section_id]`(변수명 `state`)의 `path`를 이용해
+  `section_path = storage.topic_dir / state["path"]`로 변경.
+- `state`가 `None`이거나 `path` 키가 없는 경우(오래된 manifest 등)는 기존처럼 "미완료"/에러 표시로 처리.
+
+### 19.4 `storage.section_path()`/`section_filename()` 자체는 유지
+- `initialize_manifest()`가 최초 1회 `path`를 계산할 때는 계속 필요하다 (거기서만 title로부터 파일명을 만든다). 함수 자체를 없애는 게 아니라 **반복 조회 지점**에서의 사용만 없앤다.
+
+### 19.5 테스트
+- `tests/test_research.py`/`test_assemble.py`/`test_api.py`에 회귀 테스트 추가: manifest의 `title`을 일부러 실제 파일명과 다르게 설정해둔 상황(이번에 겪은 상황을 인위적으로 재현)에서도 `research_section`의 캐시 조회, `get_section_document`, `assemble_study_document`가 `path` 필드 기준으로 파일을 정상적으로 찾는지 확인.
+
+### 19.6 남는 리스크 / 한계
+- 이 수정은 "title이 달라져도 파일을 못 찾는" 증상을 근본적으로 없애지만, **애초에 title이 왜 달라졌는지는 여전히 미상이다.** 재발하면 이번엔 `docker compose logs app`을 꼭 확보해서 실제 원인을 밝힐 것.
+- `manifest.json`의 `path` 필드 자체가 손상되거나 없는 경우(예: 아주 오래된 manifest, 수동 편집으로 필드가 지워진 경우)엔 여전히 못 찾는다 — `path`가 유일한 정답 소스이니 당연한 한계.
+
+---
+
 ## 16. 향후 검토 예정 (Claude가 담당, codex 범위 아님)
 
 - 구현 완료 후 코드 리뷰.
 - 실사용 검증: 실제 우분투 서버(또는 동등 환경)에 `docker compose up`으로 띄우고, Quick Tunnel URL로 모바일 브라우저에서 접속해 주제 생성 → 목차 검토 → 섹션 리서치 → 다운로드 → 삭제까지 전 과정 확인.
 - `docs/setup.md`를 웹앱 배포/사용법 기준으로 재작성.
 - Phase 15(§18) 완료 후: 코드 리뷰, 실제 DeepSeek+SearXNG로 한글 주제를 리서치해 섹션 본문(서술)이 한글로 나오는지 실사용 검증 (출처 URL/제목은 원문 언어 그대로가 정상), `docs/setup.md`에 언어 설정 안내 추가.
+- Phase 16(§19) 완료 후: 코드 리뷰, manifest의 title을 실제 파일명과 일부러 다르게 설정한 상황을 재현해 `research_section`/`get_section_document`/`assemble_study_document`가 여전히 파일을 찾는지 검증.
 - (향후, 별도 설계) 오디오 오버뷰 파이프라인.
