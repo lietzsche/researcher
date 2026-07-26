@@ -214,3 +214,51 @@ API 키가 어차피 필요하다면, [10장](#10-리스크--트레이드오프)
 - `docs/setup.md` 사용법 문서 작성.
 - 실사용 검증: 실제 과목/주제로 `build_study_document` 끝까지 돌려서 결과물 품질 확인.
 - (향후, 별도 설계) 오디오 오버뷰 파이프라인.
+
+## 14. 원격 접속 옵션 (Cloudflare Quick Tunnel, 선택 기능)
+
+**목적**: Claude Code/Codex CLI뿐 아니라 claude.ai 웹의 커스텀 커넥터에서도 이 MCP 서버를 쓸 수 있게, 선택적으로 네트워크에 노출한다. **로컬 stdio 모드가 여전히 기본값**이며, 이 옵션은 명시적으로 켰을 때만 동작한다 — 새로운 기본 동작이 아니다.
+
+### 14.1 왜 Cloudflare "배포"가 아니라 "터널"인가
+
+- 정식 Cloudflare 배포(Workers/Containers)는 인프라 재구성이 필요하다: Workers는 gpt-researcher가 쓰는 torch/sentence-transformers 같은 무거운 네이티브 의존성을 못 돌리고, Containers는 별도 이미지 빌드·운영이 필요하다.
+- Quick Tunnel은 기존 로컬 프로세스를 그대로 둔 채 `cloudflared`가 로컬 포트 ↔ 공개 URL을 중계만 한다 — 인프라 재구성 없이 "웹에서도 붙는다"는 목표를 가장 적은 작업으로 달성한다.
+- 트레이드오프: URL이 임시적(재시작마다 바뀜)이고, 로컬 머신이 켜져 있어야만 접속 가능하다 — 이는 로컬 우선 설계와 일관된다 (비목표: 상시 가동되는 서비스가 아니다).
+
+### 14.2 Transport 전환
+
+- 설치된 `mcp` SDK(FastMCP)가 `FastMCP.run(transport=...)`로 `stdio`/`sse`/`streamable-http`를 지원함을 직접 확인했다.
+- 기본값은 그대로 `stdio` 유지 — 지금처럼 Claude Code `.mcp.json`/Codex `config.toml`은 아무 변경 없이 동작한다.
+- 새 환경변수 `MCP_TRANSPORT`(기본 `stdio`, 원격 모드에서는 `streamable-http`)로 선택한다.
+- `MCP_HOST`(기본 `127.0.0.1`), `MCP_PORT`(기본 `8765`) — **항상 로컬호스트에만 바인딩**한다. 공개 노출은 `cloudflared`가 전담하고, 서버 자체를 LAN에도 열지 않는다.
+
+### 14.3 인증 (필수, 선택 아님)
+
+- `streamable-http` 모드가 켜지면 `MCP_BEARER_TOKEN`이 반드시 설정돼 있어야 하며, 없으면 서버가 기동을 거부한다 (`config.py` 검증에 추가).
+- FastMCP의 `TokenVerifier` 프로토콜(`async def verify_token(self, token: str) -> AccessToken | None`)을 구현해 `Authorization: Bearer <MCP_BEARER_TOKEN>` 헤더를 `secrets.compare_digest`로 상수 시간 비교 검증한다. 전체 OAuth(`AuthSettings`, `issuer_url` 등 필수 필드가 있는 무거운 스펙)는 이번 범위에서 제외 — 정적 토큰 검증만으로 충분하다.
+- 토큰은 `.env`의 `MCP_BEARER_TOKEN=`에 저장한다 (`python -c "import secrets; print(secrets.token_urlsafe(32))"`로 생성 권장).
+- **알려진 함정 (구현 전에 미리 확인함)**: FastMCP는 `host`가 `127.0.0.1`/`localhost`일 때 DNS 리바인딩 방지용 `TransportSecuritySettings`를 자동으로 켜고 `allowed_hosts`를 `127.0.0.1:*`/`localhost:*`로 제한한다. Quick Tunnel을 통해 들어오는 요청은 `Host` 헤더가 `*.trycloudflare.com`이라 이 기본 allowlist에서 거부된다. `streamable-http` 모드에서는 `transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)`로 명시적으로 완화하고, 위 bearer 토큰이 실질적인 접근 통제 수단임을 문서에 명확히 밝힌다.
+
+### 14.4 Cloudflare Quick Tunnel 실행
+
+- 별도 설치: `cloudflared` (Cloudflare 계정/도메인 불필요 — quick tunnel은 익명 사용 가능).
+- 실행: `cloudflared tunnel --url http://127.0.0.1:$MCP_PORT` → 콘솔에 `https://<random>.trycloudflare.com` 출력.
+- 이 URL은 프로세스를 재시작하면 바뀐다 — 문서에 "터널을 계속 켜두거나, 바뀔 때마다 클라이언트 설정을 갱신해야 함"을 명시한다.
+- Docker Compose에 넣지 않는다: SearXNG/Redis와 달리 상시 인프라가 아니라 필요할 때만 켜는 선택 프로세스이므로 별도 실행 스크립트(`scripts/tunnel.sh`)로 분리한다.
+
+### 14.5 클라이언트 연동
+
+- **Claude Code CLI**: `claude mcp add --transport http <name> <tunnel-url>/mcp --header "Authorization: Bearer $MCP_BEARER_TOKEN"` 형태로 등록한다. 정확한 플래그는 `claude mcp add --help`로 구현 시점에 재확인할 것 (버전에 따라 문법이 바뀔 수 있음, 이 설계 문서 작성 시점엔 미검증).
+- **claude.ai 웹 (커스텀 커넥터)**: 설정 화면에서 원격 MCP 서버 URL과 인증 헤더/토큰을 등록한다. UI가 OAuth를 강제하는지는 실제 화면에서 확인이 필요하다 — 강제한다면 이번 범위(정적 토큰)로는 부족하므로 별도 후속 작업으로 분리한다.
+- **Codex CLI**: 현재 `~/.codex/config.toml`의 `[mcp_servers.X]`가 `command`/`args`(로컬 프로세스 실행) 방식만 지원하는지, URL 기반 원격 transport도 지원하는지 **미확인 상태**다. 구현 시점에 검증해서 결과를 기록할 것 — 이번 설계가 보장하는 대상은 "Claude Code CLI + claude.ai 웹"이고, Codex CLI 원격 연동은 확인 후 별도 문서화한다.
+
+### 14.6 리스크
+
+- 로컬 프로세스가 실행 중이어야만 원격 접속 가능 (상시 서비스 아님) — 의도된 제약.
+- 토큰 유출 시 DeepSeek API 예산 소비 + 로컬 SearXNG 오남용 가능 — `.env`와 동일한 수준으로 취급하고 커밋 금지 (`.gitignore`에 이미 `.env` 포함).
+- Quick Tunnel은 Cloudflare의 무료/베스트에포트 서비스라 SLA가 없다 — 안정적 상시 접속이 필요해지면 이 설계가 아니라 named tunnel + 정식 배포(1번 질문에서 검토한 Cloudflare Containers 경로)로 넘어가야 한다.
+
+### 14.7 비목표 (유지)
+
+- Cloudflare Workers/Containers로의 정식 배포는 이번 범위 아님.
+- 여러 사용자가 각자 다른 토큰으로 접근하는 다중 사용자 시나리오는 다루지 않음 (단일 공유 토큰, 1인 사용 전제).

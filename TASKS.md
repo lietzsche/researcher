@@ -76,10 +76,26 @@
 - [x] `STRATEGIC_LLM`은 `deepseek:deepseek-v4-pro`, `FAST_LLM`/`SMART_LLM`은 `deepseek:deepseek-v4-flash` 기본값으로 설정
 - [x] 실제 `DEEPSEEK_API_KEY`로 `generate_toc` 최소 1회 실행해 정상 응답 확인 (2026-07-26 `deepseek:deepseek-v4-pro` 및 `deepseek:deepseek-v4-flash`, 각각 2개 섹션과 `toc.json`/`toc.md`/`manifest.json` 검증)
 
+## Phase 11 — 원격 접속 옵션 (DESIGN.md 14장, Cloudflare Quick Tunnel)
+
+> Phase 0-10은 완료됨. 이 phase는 로컬 stdio 기본 동작은 그대로 두고, 명시적으로 켰을 때만 동작하는 원격(streamable-http) 모드를 추가하는 선택 기능이다. 로컬 전용 사용자에게는 아무 영향이 없어야 한다 (`MCP_TRANSPORT` 미설정 시 지금과 100% 동일하게 동작).
+
+- [ ] `mcp_server/config.py`: `Settings`에 `mcp_transport`(기본 `"stdio"`), `mcp_host`(기본 `"127.0.0.1"`), `mcp_port`(기본 `8765`), `mcp_bearer_token`(`str | None`) 필드 추가. 검증 로직에 "`mcp_transport != 'stdio'`인데 `mcp_bearer_token`이 없으면 에러" 추가.
+- [ ] `mcp_server/auth.py` (신규): FastMCP `TokenVerifier` 프로토콜 구현체 — `Authorization: Bearer <token>`을 `secrets.compare_digest`로 상수 시간 비교. 잘못된/누락된 토큰은 인증 실패 처리.
+- [ ] `mcp_server/server.py`: `mcp_transport == "streamable-http"`일 때만 `FastMCP(...)`에 `host`/`port`/`token_verifier`를 전달하고, `transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)`로 명시적으로 완화 (DESIGN.md 14.3의 Host-header 함정 때문 — 이유를 코드 주석에 남길 것). `main()`은 `mcp.run(transport=settings.mcp_transport)`로 분기.
+- [ ] `.env.example`: `MCP_TRANSPORT`, `MCP_HOST`, `MCP_PORT`, `MCP_BEARER_TOKEN`을 주석 처리된 선택 옵션으로 추가, 토큰 생성 명령어(`python -c "import secrets; print(secrets.token_urlsafe(32))"`) 예시 포함.
+- [ ] `scripts/tunnel.sh` (신규, 실행권한 부여): `cloudflared` 설치 여부 확인 후 `cloudflared tunnel --url http://$MCP_HOST:$MCP_PORT` 실행하는 래퍼. 미설치 시 설치 안내 메시지 출력.
+- [ ] `tests/`: 토큰 검증 유닛 테스트(정상 토큰/틀린 토큰/토큰 없음), config 검증 테스트(`mcp_transport=streamable-http`인데 `mcp_bearer_token` 없으면 에러).
+- [ ] `claude mcp add --help`로 원격 http transport 등록 문법을 실제로 확인하고, 확인된 정확한 명령어를 커밋 메시지 또는 TASKS.md 이 항목 옆에 메모 (DESIGN.md 14.5는 미검증 초안이므로 실제 문법으로 교체 필요).
+- [ ] Codex CLI(`~/.codex/config.toml`)가 URL 기반 원격 MCP transport를 지원하는지 확인하고 결과(지원/미지원, 지원 시 문법)를 TASKS.md 이 항목 옆에 메모.
+- [ ] 실제로 `MCP_TRANSPORT=streamable-http`로 서버를 띄우고 `cloudflared tunnel --url ...`로 터널을 연 뒤, `curl`로 (a) `Authorization` 헤더 없이 호출 시 거부되는지, (b) 올바른 토큰으로 호출 시 정상 응답하는지 실제로 검증 (스모크 테스트, 결과를 커밋 메시지에 남길 것).
+- [ ] Phase 9와 동일한 커밋 규율: 논리 단위로 커밋 분리, `.env`/토큰 값이 커밋에 안 들어가는지 확인 후 push.
+
 ---
 
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
 - [x] 구현 코드 리뷰 — 발견한 4건(전부 심각도 높음)을 직접 수정: `gpt-researcher` 0.16.0 import 버그 → 버전 상한 고정, DeepSeek-only 설정에서 임베딩 때문에 죽는 문제 → `EMBEDDING` 기본값 추가, `RETRIEVER` 환경변수 충돌로 2섹션 이상 `build_study_document`가 항상 실패하던 버그 → 수정, 한글 주제가 해시 폴더명으로 뭉개지던 `slugify` 버그 → 수정. 낮은 우선순위 2건(SearXNG 빈 검색 결과 조용히 통과, `SEARXNG_SECRET` 무효)은 DESIGN.md/docs/setup.md에 기록만 하고 미수정.
 - [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.
 - [x] `docs/setup.md` 사용법 문서 작성
+- [ ] Phase 11 완료 후: 코드 리뷰, 로컬 stdio 모드가 영향받지 않는지 회귀 확인, 실제 터널을 통해 Claude Code CLI와 (가능하면) claude.ai 웹 커스텀 커넥터 연결까지 검증, `docs/setup.md`에 "원격 접속 (선택)" 섹션 작성
 - [ ] (향후, 별도 설계) 오디오 오버뷰 파이프라인 설계
