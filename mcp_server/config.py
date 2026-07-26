@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, HttpUrl, ValidationError, model_validator
@@ -24,6 +25,10 @@ class Settings(BaseModel):
     retriever: str = "searxng"
     searxng_url: HttpUrl = HttpUrl("http://localhost:8080")
     mcp_server_name: str = "deep-research"
+    mcp_transport: Literal["stdio", "streamable-http"] = "stdio"
+    mcp_host: str = "127.0.0.1"
+    mcp_port: int = Field(default=8765, ge=1, le=65535)
+    mcp_bearer_token: str | None = None
     research_output_dir: Path = Path("./outputs")
     request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     require_api_key: bool = True
@@ -41,6 +46,14 @@ class Settings(BaseModel):
             )
         if self.retriever.lower() != "searxng":
             raise ValueError("RETRIEVER must be 'searxng' for local research")
+        if self.mcp_transport != "stdio" and not self.mcp_bearer_token:
+            raise ValueError(
+                "MCP_BEARER_TOKEN is required when MCP_TRANSPORT is not 'stdio'"
+            )
+        if self.mcp_host not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError(
+                "MCP_HOST must remain loopback-only; use cloudflared for exposure"
+            )
         return self
 
 
@@ -75,6 +88,10 @@ def load_settings(
         "retriever": "searxng",
         "searxng_url": os.getenv("SEARXNG_URL", "http://localhost:8080"),
         "mcp_server_name": os.getenv("MCP_SERVER_NAME", "deep-research"),
+        "mcp_transport": os.getenv("MCP_TRANSPORT", "stdio"),
+        "mcp_host": os.getenv("MCP_HOST", "127.0.0.1"),
+        "mcp_port": os.getenv("MCP_PORT", "8765"),
+        "mcp_bearer_token": os.getenv("MCP_BEARER_TOKEN") or None,
         "research_output_dir": Path(
             os.getenv("RESEARCH_OUTPUT_DIR", "./outputs")
         ),

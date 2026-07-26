@@ -13,10 +13,13 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from mcp_server.assemble import assemble_study_document
-from mcp_server.config import load_settings
+from mcp_server.auth import StaticTokenVerifier
+from mcp_server.config import Settings, load_settings
 from mcp_server.research import quick_search as run_quick_search
 from mcp_server.research import research_section as run_research_section
 from mcp_server.schemas import (
@@ -33,13 +36,48 @@ from mcp_server.storage import OutputStorage
 from mcp_server.toc import generate_toc as run_generate_toc
 
 load_dotenv(override=False)
-mcp = FastMCP(
-    os.getenv("MCP_SERVER_NAME", "deep-research"),
-    instructions=(
+_INSTRUCTIONS = (
         "Build study documents by generating a TOC, independently researching "
         "each section, and assembling the saved section files."
-    ),
 )
+
+
+def _create_mcp(settings: Settings) -> FastMCP:
+    common_options: dict[str, Any] = {
+        "name": settings.mcp_server_name,
+        "instructions": _INSTRUCTIONS,
+    }
+    if settings.mcp_transport == "streamable-http":
+        local_base_url = f"http://{settings.mcp_host}:{settings.mcp_port}"
+        common_options.update(
+            {
+                "host": settings.mcp_host,
+                "port": settings.mcp_port,
+                "token_verifier": StaticTokenVerifier(
+                    settings.mcp_bearer_token or ""
+                ),
+                # MCP 1.28.1 requires AuthSettings whenever token_verifier is
+                # provided. These URLs identify this local resource; no OAuth
+                # authorization server is added for the shared static token.
+                "auth": AuthSettings(
+                    issuer_url=local_base_url,
+                    resource_server_url=f"{local_base_url}/mcp",
+                ),
+                # FastMCP's localhost defaults only allow localhost Host
+                # headers. Cloudflare Quick Tunnel forwards its public
+                # *.trycloudflare.com Host header, so that allowlist rejects
+                # every tunneled request. The mandatory bearer token is the
+                # access-control boundary for this explicitly enabled mode.
+                "transport_security": TransportSecuritySettings(
+                    enable_dns_rebinding_protection=False
+                ),
+            }
+        )
+    return FastMCP(**common_options)
+
+
+server_settings = load_settings(require_api_key=False)
+mcp = _create_mcp(server_settings)
 
 
 def _tool_error(tool: str, exc: BaseException) -> RuntimeError:
@@ -188,8 +226,8 @@ async def quick_search(
 
 
 def main() -> None:
-    """Run the server using local stdio transport."""
-    mcp.run(transport="stdio")
+    """Run the configured transport; stdio remains the default."""
+    mcp.run(transport=server_settings.mcp_transport)
 
 
 if __name__ == "__main__":
