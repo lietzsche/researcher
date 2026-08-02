@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -74,11 +75,13 @@ class WatchStore:
         OutputStorage._atomic_write(self._watch_path(str(watch["slug"])), payload)
 
     def delete(self, slug: str) -> None:
-        watch = self.get(slug)
+        self.get(slug)
+        run_dir = (self.runs_dir / slug).resolve()
+        if run_dir.parent != self.runs_dir.resolve():
+            raise ValueError("Unsafe watch run directory")
         self._watch_path(slug).unlink()
-        for run_id in (watch.get("current_run_id"), watch.get("previous_run_id")):
-            if run_id:
-                self._run_path(slug, str(run_id)).unlink(missing_ok=True)
+        if run_dir.is_dir():
+            shutil.rmtree(run_dir)
 
     def set_interval(self, slug: str, interval_minutes: int | None) -> dict[str, Any]:
         if interval_minutes is not None and not 5 <= interval_minutes <= 10080:

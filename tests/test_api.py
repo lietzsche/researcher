@@ -273,9 +273,16 @@ def test_watch_api_registration_refresh_persistence_and_delete(tmp_path: Path) -
         assert refresh.status_code == 202
         assert scheduler.refreshed == [slug]
 
+        store = WatchStore(tmp_path)
+        store.save_run(
+            slug,
+            {"id": "old", "created_at": "old", "findings": [], "changes": {}},
+        )
+
         assert client.delete(f"/api/watches/{slug}").status_code == 204
         assert client.get(f"/api/watches/{slug}").status_code == 404
         assert WatchStore(tmp_path).list() == []
+        assert not (store.runs_dir / slug).exists()
 
 def test_excel_and_zip_downloads_encode_korean_filenames(tmp_path: Path) -> None:
     settings = Settings(require_api_key=False, research_output_dir=tmp_path)

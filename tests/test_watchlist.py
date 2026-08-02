@@ -22,6 +22,33 @@ def test_watch_registration_persists_across_store_instances(tmp_path: Path) -> N
     assert restored["next_run_at"] is not None
 
 
+def test_delete_removes_all_run_history_without_touching_other_watch(
+    tmp_path: Path,
+) -> None:
+    store = WatchStore(tmp_path)
+    target = store.create("Delete all history")
+    other = store.create("Keep this history")
+    for run_id in ("first", "second", "third"):
+        store.save_run(
+            target["slug"],
+            {"id": run_id, "created_at": run_id, "findings": [], "changes": {}},
+        )
+    target["previous_run_id"] = "second"
+    target["current_run_id"] = "third"
+    store.save(target)
+    store.save_run(
+        other["slug"],
+        {"id": "other", "created_at": "other", "findings": [], "changes": {}},
+    )
+
+    store.delete(target["slug"])
+
+    assert not store._watch_path(target["slug"]).exists()
+    assert not (store.runs_dir / target["slug"]).exists()
+    assert store.get(other["slug"])["topic"] == "Keep this history"
+    assert store.load_run(other["slug"], "other")["id"] == "other"
+
+
 def test_compare_findings_classifies_added_changed_removed_and_no_change() -> None:
     old = [finding("https://a", "A"), finding("https://b", "Before")]
     new = [finding("https://b", "After"), finding("https://c", "C")]
