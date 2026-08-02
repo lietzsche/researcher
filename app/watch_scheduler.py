@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from app.config import Settings
 from app.watchlist import WatchStore, refresh_watch
@@ -25,6 +26,11 @@ class WatchScheduler:
 
     async def start(self) -> None:
         self.store.reconcile_interrupted()
+        now = datetime.now(UTC)
+        for watch in self.store.list():
+            next_run = watch.get("next_run_at")
+            if next_run and datetime.fromisoformat(next_run) <= now:
+                self._advance_next_run(watch, now)
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._run(), name="watch-scheduler")
 
@@ -49,6 +55,7 @@ class WatchScheduler:
             raise RuntimeError("Watch refresh is already in progress")
         watch["status"] = "pending"
         watch["last_error"] = None
+        self._advance_next_run(watch, datetime.now(UTC), save=False)
         self.store.save(watch)
         task = asyncio.create_task(self._refresh(slug), name=f"watch-refresh-{slug}")
         self._refresh_tasks.add(task)
@@ -68,6 +75,7 @@ class WatchScheduler:
         for slug in due:
             watch = self.store.get(slug)
             watch["status"] = "pending"
+            self._advance_next_run(watch, now, save=False)
             self.store.save(watch)
             await self._refresh(slug)
         return due
@@ -76,8 +84,26 @@ class WatchScheduler:
         async with self._lock:
             try:
                 await refresh_watch(self.store, slug, self.settings)
-            except BaseException:
+            except BaseException as exc:
+                watch = self.store.get(slug)
+                watch["status"] = "error"
+                watch["last_error"] = str(exc)
+                self.store.save(watch)
                 logger.exception("Watch refresh failed: %s", slug)
+
+    def _advance_next_run(
+        self,
+        watch: dict[str, Any],
+        now: datetime,
+        *,
+        save: bool = True,
+    ) -> None:
+        interval = watch.get("interval_minutes")
+        watch["next_run_at"] = (
+            (now + timedelta(minutes=interval)).isoformat() if interval else None
+        )
+        if save:
+            self.store.save(watch)
 
     async def _run(self) -> None:
         while True:

@@ -77,3 +77,67 @@ async def test_manual_trigger_rejects_duplicate_pending_refresh(
 
     release.set()
     await asyncio.gather(*scheduler._refresh_tasks)
+
+
+@pytest.mark.asyncio
+async def test_start_rebases_overdue_schedule_without_replaying_refresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started_at = datetime(2026, 8, 2, 1, 15, 57, tzinfo=UTC)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return started_at
+
+    settings = Settings(require_api_key=False, research_output_dir=tmp_path)
+    store = WatchStore(tmp_path)
+    watch = store.create("Restarted schedule", interval_minutes=60)
+    stored = store.get(watch["slug"])
+    stored["next_run_at"] = "2026-08-02T00:55:57+00:00"
+    store.save(stored)
+    calls: list[str] = []
+
+    async def unexpected_refresh(_store, slug, _settings):
+        calls.append(slug)
+        return {}
+
+    monkeypatch.setattr(scheduler_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(scheduler_module, "refresh_watch", unexpected_refresh)
+    scheduler = WatchScheduler(settings, poll_seconds=3600)
+
+    await scheduler.start()
+    await asyncio.sleep(0)
+    await scheduler.stop()
+
+    restored = store.get(watch["slug"])
+    assert calls == []
+    assert restored["next_run_at"] == "2026-08-02T02:15:57+00:00"
+
+
+@pytest.mark.asyncio
+async def test_failed_scheduled_refresh_waits_until_next_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_tick = datetime(2026, 8, 2, 1, 15, 57, tzinfo=UTC)
+    settings = Settings(require_api_key=False, research_output_dir=tmp_path)
+    scheduler = WatchScheduler(settings)
+    watch = scheduler.store.create("Failing schedule", interval_minutes=60)
+    stored = scheduler.store.get(watch["slug"])
+    stored["next_run_at"] = "2026-08-02T00:55:57+00:00"
+    scheduler.store.save(stored)
+    calls: list[str] = []
+
+    async def failing_refresh(_store, slug, _settings):
+        calls.append(slug)
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(scheduler_module, "refresh_watch", failing_refresh)
+
+    await scheduler.run_due(now=first_tick)
+    await scheduler.run_due(now=first_tick + timedelta(seconds=30))
+
+    restored = scheduler.store.get(watch["slug"])
+    assert calls == [watch["slug"]]
+    assert restored["status"] == "error"
+    assert restored["next_run_at"] == "2026-08-02T02:15:57+00:00"
