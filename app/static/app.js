@@ -4,6 +4,7 @@ let pollTimer = null;
 const API_TIMEOUT_MS = 20000;
 
 const statusLabels = {
+  idle: "대기",
   pending: "대기",
   in_progress: "진행 중",
   done: "완료",
@@ -21,6 +22,15 @@ function escapeHtml(value) {
 
 function encodeSlug(value) {
   return encodeURIComponent(value);
+}
+
+function safeExternalUrl(value) {
+  try {
+    const url = new URL(String(value));
+    return ["http:", "https:"].includes(url.protocol) ? escapeHtml(url.href) : "#";
+  } catch {
+    return "#";
+  }
 }
 
 function notify(message, isError = false) {
@@ -108,6 +118,107 @@ function renderError(error) {
 
 function progressText(completed, total) {
   return total ? `${completed}/${total}` : "0/0";
+}
+
+function watchChangeSummary(run) {
+  if (!run) return '<p class="muted">아직 실행 기록이 없습니다.</p>';
+  const changes = run.changes || {};
+  if (changes.outcome === "initial") {
+    return `<p class="research-notice">첫 스냅샷 · ${run.findings.length}개 결과</p>`;
+  }
+  if (changes.outcome === "no_change") {
+    return '<p class="research-notice">이전 실행 이후 변경 없음</p>';
+  }
+  const links = (items, label) => items.length
+    ? `<section><h3>${label} ${items.length}건</h3><ul>${items.map((item) => {
+        const finding = item.after || item;
+        return `<li><a href="${safeExternalUrl(finding.url)}" target="_blank" rel="noreferrer">${escapeHtml(finding.title)}</a><p>${escapeHtml(finding.snippet)}</p></li>`;
+      }).join("")}</ul></section>`
+    : "";
+  return `<div class="watch-changes">
+    ${links(changes.added || [], "추가")}
+    ${links(changes.changed || [], "변경")}
+    ${links(changes.removed || [], "제거")}
+  </div>`;
+}
+
+async function renderWatches() {
+  setLoading("관심 주제를 불러오는 중…");
+  const watches = await api("/api/watches");
+  appRoot.innerHTML = `
+    <section class="page-heading">
+      <div><a class="back-link" href="#/">← 내 주제</a><p class="eyebrow">지속 리서치</p><h1>관심 주제</h1>
+      <p>같은 검색 파이프라인을 주기적으로 실행해 새 변화만 확인합니다.</p></div>
+      <div class="hero-actions"><a class="button button-ghost" href="#/watches/guide">사용 가이드</a><a class="button button-primary" href="#/watches/new">관심 주제 등록</a></div>
+    </section>
+    <div class="topic-grid">${watches.length ? watches.map((watch) => `
+      <article class="panel topic-card"><div class="card-topline"><span class="status-badge ${escapeHtml(watch.status)}">${escapeHtml(statusLabels[watch.status] || watch.status)}</span><span>${watch.interval_minutes ? `${watch.interval_minutes}분마다` : "수동"}</span></div>
+      <h3>${escapeHtml(watch.topic)}</h3><p class="muted">${watch.last_error ? escapeHtml(watch.last_error) : "최근 오류 없음"}</p>
+      <div class="card-actions"><a class="button button-small" href="#/watches/${encodeSlug(watch.slug)}">열기</a></div></article>`).join("") : '<article class="panel empty-state"><h3>등록된 관심 주제가 없습니다</h3></article>'}</div>`;
+}
+
+function renderNewWatch() {
+  appRoot.innerHTML = `<section class="narrow"><a class="back-link" href="#/watches">← 관심 주제</a>
+    <article class="panel form-panel"><p class="eyebrow">지속 리서치</p><h1>관심 주제 등록</h1>
+    <form id="new-watch-form"><label>검색 주제<input name="topic" required maxlength="500"></label>
+    <label>자동 새로고침 간격 <span class="optional">(비우면 수동)</span><input name="interval" type="number" min="5" max="10080" placeholder="분"></label>
+    <button class="button button-primary" type="submit">등록</button></form></article></section>`;
+  const form = document.querySelector("#new-watch-form");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const payload = { topic: data.get("topic").trim(), interval_minutes: data.get("interval") ? Number(data.get("interval")) : null };
+    const watch = await api("/api/watches", { method: "POST", body: JSON.stringify(payload) });
+    window.location.hash = `#/watches/${encodeSlug(watch.slug)}`;
+  });
+}
+
+async function renderWatch(slug, isPoll = false) {
+  if (!isPoll) setLoading("변화 기록을 불러오는 중…");
+  const detail = await api(`/api/watches/${encodeSlug(slug)}`);
+  const { watch, current_run: run } = detail;
+  const busy = ["pending", "running"].includes(watch.status);
+  appRoot.innerHTML = `<section class="page-heading"><div><a class="back-link" href="#/watches">← 관심 주제</a><p class="eyebrow">${escapeHtml(watch.status)}</p><h1>${escapeHtml(watch.topic)}</h1>
+    <p>${watch.interval_minutes ? `${watch.interval_minutes}분 간격 · 다음 실행 ${escapeHtml(watch.next_run_at || "계산 중")}` : "수동 새로고침"}</p></div>
+    <button id="refresh-watch" class="button button-primary" ${busy ? "disabled" : ""}>${busy ? "새로고침 중…" : "지금 새로고침"}</button></section>
+    ${watch.last_error ? `<p class="panel research-notice error">${escapeHtml(watch.last_error)} · 다시 시도할 수 있습니다.</p>` : ""}
+    <article class="panel form-panel"><h2>최근 변화</h2>${watchChangeSummary(run)}</article>
+    <article class="panel watch-settings"><h2>자동 새로고침</h2><form id="watch-interval-form" class="inline-form">
+      <label>간격(분, 5~10080; 비우면 수동)<input name="interval" type="number" min="5" max="10080" value="${watch.interval_minutes || ""}" ${busy ? "disabled" : ""}></label>
+      <button class="button button-ghost" type="submit" ${busy ? "disabled" : ""}>설정 저장</button></form></article>
+    <section class="footer-actions"><a class="button button-ghost" href="#/watches/guide">사용 가이드</a><button id="delete-watch" class="button button-danger" ${busy ? "disabled" : ""}>관심 주제 삭제</button></section>`;
+  document.querySelector("#refresh-watch").addEventListener("click", async () => {
+    await api(`/api/watches/${encodeSlug(slug)}/refresh`, { method: "POST" });
+    await renderWatch(slug, true);
+  });
+  document.querySelector("#delete-watch").addEventListener("click", async () => {
+    if (!window.confirm("이 관심 주제와 실행 기록을 삭제할까요?")) return;
+    await api(`/api/watches/${encodeSlug(slug)}`, { method: "DELETE" });
+    window.location.hash = "#/watches";
+  });
+  document.querySelector("#watch-interval-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const value = new FormData(event.currentTarget).get("interval");
+    await api(`/api/watches/${encodeSlug(slug)}`, { method: "PATCH", body: JSON.stringify({ interval_minutes: value ? Number(value) : null }) });
+    notify("새로고침 간격을 저장했습니다.");
+    await renderWatch(slug, true);
+  });
+  if (busy && window.location.hash.includes("#/watches/")) {
+    pollTimer = window.setTimeout(() => renderWatch(slug, true), 3000);
+  }
+}
+
+function renderWatchGuide() {
+  appRoot.innerHTML = `<section class="narrow"><a class="back-link" href="#/watches">← 관심 주제</a>
+    <article class="panel prose watch-guide"><p class="eyebrow">관심 주제 사용 가이드</p><h1>변화를 놓치지 않는 방법</h1>
+    <h2>1. 주제 등록</h2><p>관심 주제 화면에서 검색할 주제를 등록합니다. 같은 이름은 중복 등록되지 않습니다.</p>
+    <h2>2. 수동 새로고침</h2><p>상세 화면의 <strong>지금 새로고침</strong>을 누르면 기존 Researcher 검색 파이프라인으로 최신 출처를 수집합니다.</p>
+    <h2>3. 예약 새로고침</h2><p>5~10080분 사이의 간격을 저장하면 서버가 실행 중일 때 예약 시각에 새로고침합니다. 값을 비우면 수동 모드입니다.</p>
+    <h2>4. 변화 읽기</h2><p><strong>추가</strong>는 새 URL, <strong>변경</strong>은 같은 URL의 제목·요약 변화, <strong>제거</strong>는 사라진 URL입니다. 모든 항목은 원문 출처 링크를 유지하며, 차이가 없으면 <strong>변경 없음</strong>으로 표시됩니다.</p>
+    <h2>5. 실패와 재시도</h2><p>검색 오류나 빈 결과는 오류 상태로 남고 기존 스냅샷을 보존합니다. 원인을 확인한 뒤 지금 새로고침으로 다시 시도할 수 있습니다.</p>
+    <h2>6. 저장과 재시작</h2><p>등록 정보와 최근·이전 스냅샷은 출력 디렉터리에 원자적으로 저장됩니다. 서버 재시작 시 예약을 복원하며, 중단된 실행은 오류로 표시해 재시도할 수 있습니다.</p>
+    <h2>알려진 한계</h2><p>스케줄러는 단일 프로세스에서 동작하는 best-effort 방식입니다. 서버가 꺼진 동안 실행하지 않으며, 라이브 결과는 실행 중인 SearXNG와 선택한 API 제공자 접근 상태에 따라 달라집니다.</p>
+    </article></section>`;
 }
 
 function sectionNeighbors(toc, manifestSections, sectionId) {
@@ -629,6 +740,14 @@ async function route() {
       renderNewTopic();
     } else if (parts[0] === "logs" && parts.length === 1) {
       await renderLogs();
+    } else if (parts[0] === "watches" && parts.length === 1) {
+      await renderWatches();
+    } else if (parts[0] === "watches" && parts[1] === "new") {
+      renderNewWatch();
+    } else if (parts[0] === "watches" && parts[1] === "guide") {
+      renderWatchGuide();
+    } else if (parts[0] === "watches" && parts.length === 2) {
+      await renderWatch(decodeURIComponent(parts[1]));
     } else if (parts[0] === "topic" && (parts.length === 3 || parts.length === 4)) {
       const slug = decodeURIComponent(parts[1]);
       if (parts[2] === "toc" && parts.length === 3) await renderToc(slug);

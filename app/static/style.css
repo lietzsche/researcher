@@ -414,6 +414,47 @@ textarea {
   font-weight: 750;
 }
 
+.research-notice.error {
+  color: var(--danger);
+  background: #fff0ed;
+}
+
+.watch-changes {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.watch-changes ul {
+  display: grid;
+  gap: 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.watch-changes a {
+  color: var(--accent);
+  font-weight: 750;
+}
+
+.watch-changes p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+}
+
+.watch-settings {
+  margin-top: 1rem;
+  padding: 1.5rem;
+}
+
+.inline-form {
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  margin-top: 1rem;
+}
+
+.watch-guide h1 {
+  font-size: clamp(2rem, 6vw, 3.5rem);
+}
+
 .toc-item {
   display: grid;
   grid-template-columns: 70px minmax(0, 1fr);
