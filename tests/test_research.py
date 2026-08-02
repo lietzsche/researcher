@@ -359,6 +359,43 @@ async def test_quick_search_uses_searxng_json_api() -> None:
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_quick_search_counts_only_usable_results_toward_limit() -> None:
+    """Invalid early entries must not hide usable results later in the payload."""
+    respx.get("http://searx.test/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"title": "Missing URL", "content": "not usable"},
+                    {
+                        "title": "Usable result",
+                        "url": "https://example.com/usable",
+                        "content": "Useful snippet",
+                    },
+                ]
+            },
+        )
+    )
+    settings = Settings(
+        require_api_key=False,
+        searxng_url="http://searx.test",
+    )
+
+    result = await quick_search("test query", num_results=1, settings=settings)
+
+    assert result == {
+        "results": [
+            {
+                "title": "Usable result",
+                "url": "https://example.com/usable",
+                "snippet": "Useful snippet",
+            }
+        ]
+    }
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_diagnose_searxng_failure_reports_no_unresponsive_engines() -> None:
     route = respx.get("http://searx.test/search").mock(
         return_value=httpx.Response(200, json={"unresponsive_engines": []})

@@ -394,7 +394,7 @@ async def quick_search(
             await client.aclose()
 
     results = []
-    for item in payload.get("results", [])[:num_results]:
+    for item in payload.get("results", []):
         url = str(item.get("url", "")).strip()
         if not url:
             continue
@@ -405,4 +405,6 @@ async def quick_search(
                 "snippet": str(item.get("content") or "").strip(),
             }
         )
+        if len(results) == num_results:
+            break
     return {"results": results}

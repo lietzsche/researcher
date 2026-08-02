@@ -430,6 +430,15 @@
 
 ---
 
+## Phase 25 — `quick_search`가 유효한 후속 결과를 누락하는 문제 해결
+
+- [x] URL 없는 원시 결과가 요청 개수 안에 먼저 나오면, 뒤의 유효한 결과가 있어도 빈 목록을 반환하는 실패를 회귀 테스트로 재현.
+- [x] `app/research.py`: 원시 결과를 먼저 자르지 않고 URL이 있는 결과만 요청 개수에 포함하도록 수정.
+- [x] `tests/test_research.py`: URL 없는 선행 항목 뒤의 유효한 결과가 반환되는지 검증하는 테스트 추가.
+- [x] 관련 테스트와 전체 테스트 실행 결과를 팀 리드 검증용으로 보고.
+
+---
+
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
 - [x] 구현 코드 리뷰 — 발견한 4건(전부 심각도 높음)을 직접 수정: `gpt-researcher` 0.16.0 import 버그 → 버전 상한 고정, DeepSeek-only 설정에서 임베딩 때문에 죽는 문제 → `EMBEDDING` 기본값 추가, `RETRIEVER` 환경변수 충돌로 2섹션 이상 `build_study_document`가 항상 실패하던 버그 → 수정, 한글 주제가 해시 폴더명으로 뭉개지던 `slugify` 버그 → 수정. 낮은 우선순위 2건(SearXNG 빈 검색 결과 조용히 통과, `SEARXNG_SECRET` 무효)은 DESIGN.md/docs/setup.md에 기록만 하고 미수정.
 - [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.
