@@ -15,6 +15,7 @@ from app.jobs import SerialJobQueue
 from app.main import create_app
 from app.storage import OutputStorage
 from app.toc import toc_to_markdown
+from app.watchlist import WatchStore
 
 
 class FakeQueue:
@@ -64,6 +65,21 @@ class FakeQueue:
                 num_sections=num_sections,
                 output_root=self.output_root,
             )
+
+
+class FakeWatchScheduler:
+    def __init__(self) -> None:
+        self.started = False
+        self.refreshed: list[str] = []
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.started = False
+
+    async def trigger(self, slug: str) -> None:
+        self.refreshed.append(slug)
 
 
 def fake_toc_generator_factory(output_root: Path):
@@ -224,6 +240,42 @@ def test_all_topic_routes(api_client: tuple[TestClient, FakeQueue, Settings]) ->
     assert not storage.topic_dir.exists()
     assert client.get(f"/api/topics/{slug}").status_code == 404
 
+
+def test_watch_api_registration_refresh_persistence_and_delete(tmp_path: Path) -> None:
+    settings = Settings(require_api_key=False, research_output_dir=tmp_path)
+    scheduler = FakeWatchScheduler()
+    application = create_app(
+        settings=settings,
+        job_queue=FakeQueue(tmp_path),
+        watch_scheduler=scheduler,
+    )
+
+    with TestClient(application) as client:
+        created = client.post(
+            "/api/watches",
+            json={"topic": "Tracked releases", "interval_minutes": 60},
+        )
+        assert created.status_code == 201
+        slug = created.json()["slug"]
+        assert client.post(
+            "/api/watches", json={"topic": "Tracked releases"}
+        ).status_code == 409
+        assert client.get("/api/watches").json()[0]["slug"] == slug
+        assert client.get(f"/api/watches/{slug}").json()["current_run"] is None
+
+        updated = client.patch(
+            f"/api/watches/{slug}", json={"interval_minutes": None}
+        )
+        assert updated.status_code == 200
+        assert updated.json()["next_run_at"] is None
+
+        refresh = client.post(f"/api/watches/{slug}/refresh")
+        assert refresh.status_code == 202
+        assert scheduler.refreshed == [slug]
+
+        assert client.delete(f"/api/watches/{slug}").status_code == 204
+        assert client.get(f"/api/watches/{slug}").status_code == 404
+        assert WatchStore(tmp_path).list() == []
 
 def test_excel_and_zip_downloads_encode_korean_filenames(tmp_path: Path) -> None:
     settings = Settings(require_api_key=False, research_output_dir=tmp_path)

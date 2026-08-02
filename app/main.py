@@ -28,6 +28,8 @@ from app.jobs import SerialJobQueue
 from app.logs import InMemoryLogHandler
 from app.schemas import GenerateTocInput
 from app.storage import OutputStorage, reconcile_stale_jobs
+from app.watch_scheduler import WatchScheduler
+from app.watchlist import WatchStore
 
 logger = logging.getLogger(__name__)
 security = HTTPBasic(auto_error=False)
@@ -66,11 +68,32 @@ class JobQueue(Protocol):
     ) -> None: ...
 
 
+class WatchSchedulerOperations(Protocol):
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+    async def trigger(self, slug: str) -> None: ...
+
+
 class BuildRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sections_filter: list[str] | None = None
     force_regenerate: bool = False
+
+
+class CreateWatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    topic: str
+    interval_minutes: int | None = None
+
+
+class UpdateWatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    interval_minutes: int | None = None
 
 
 def _settings(request: Request) -> Settings:
@@ -141,6 +164,7 @@ def create_app(
     *,
     settings: Settings | None = None,
     job_queue: JobQueue | None = None,
+    watch_scheduler: WatchSchedulerOperations | None = None,
 ) -> FastAPI:
     """Build an application, allowing lightweight dependency injection in tests."""
 
@@ -151,6 +175,7 @@ def create_app(
         root_logger.addHandler(log_handler)
         application.state.log_handler = log_handler
         queue_instance: JobQueue | None = None
+        watch_scheduler_instance: WatchSchedulerOperations | None = None
         try:
             application.state.settings = settings or load_settings()
             application.state.settings.research_output_dir.mkdir(
@@ -165,8 +190,15 @@ def create_app(
             queue_instance = job_queue or SerialJobQueue(application.state.settings)
             application.state.job_queue = queue_instance
             await queue_instance.start()
+            watch_scheduler_instance = watch_scheduler or WatchScheduler(
+                application.state.settings
+            )
+            application.state.watch_scheduler = watch_scheduler_instance
+            await watch_scheduler_instance.start()
             yield
         finally:
+            if watch_scheduler_instance is not None:
+                await watch_scheduler_instance.stop()
             if queue_instance is not None:
                 await queue_instance.stop()
             root_logger.removeHandler(log_handler)
@@ -203,6 +235,67 @@ def create_app(
     ) -> list[dict[str, Any]]:
         handler: InMemoryLogHandler = request.app.state.log_handler
         return handler.get_records(after_id=after_id, limit=limit)
+
+    @application.post("/api/watches", status_code=status.HTTP_201_CREATED)
+    async def create_watch(payload: CreateWatchRequest, request: Request) -> dict[str, Any]:
+        store = WatchStore(_settings(request).research_output_dir)
+        try:
+            return store.create(
+                payload.topic, interval_minutes=payload.interval_minutes
+            )
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.get("/api/watches")
+    async def list_watches(request: Request) -> list[dict[str, Any]]:
+        return WatchStore(_settings(request).research_output_dir).list()
+
+    @application.get("/api/watches/{slug}")
+    async def get_watch(slug: str, request: Request) -> dict[str, Any]:
+        try:
+            return WatchStore(_settings(request).research_output_dir).detail(slug)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Watch not found") from exc
+
+    @application.patch("/api/watches/{slug}")
+    async def update_watch(
+        slug: str, payload: UpdateWatchRequest, request: Request
+    ) -> dict[str, Any]:
+        try:
+            return WatchStore(_settings(request).research_output_dir).set_interval(
+                slug, payload.interval_minutes
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Watch not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @application.post(
+        "/api/watches/{slug}/refresh", status_code=status.HTTP_202_ACCEPTED
+    )
+    async def start_watch_refresh(slug: str, request: Request) -> dict[str, str]:
+        scheduler = request.app.state.watch_scheduler
+        try:
+            await scheduler.trigger(slug)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Watch not found") from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"status": "queued"}
+
+    @application.delete("/api/watches/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_watch(slug: str, request: Request) -> Response:
+        store = WatchStore(_settings(request).research_output_dir)
+        try:
+            watch = store.get(slug)
+            if watch["status"] in {"pending", "running"}:
+                raise HTTPException(status_code=409, detail="Watch refresh is in progress")
+            store.delete(slug)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Watch not found") from exc
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @application.post("/api/topics", status_code=status.HTTP_202_ACCEPTED)
     async def create_topic(payload: GenerateTocInput, request: Request) -> dict[str, Any]:
