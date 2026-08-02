@@ -439,6 +439,20 @@
 
 ---
 
+## Phase 26 — 관심 주제 지속 리서치 MVP (DESIGN.md §28)
+
+- [x] 기존 출력 루트의 `.watchlist/`에 관심 주제와 최근/이전 실행 스냅샷을 원자적으로 저장.
+- [x] 기존 `quick_search()`를 재사용하고 URL 기준으로 추가/변경/제거/변경 없음을 결정적으로 비교.
+- [x] 빈 결과/검색 실패를 재시도 가능한 `error`로 기록하고 이전 성공 스냅샷 보존.
+- [x] 수동 새로고침과 단일 프로세스 best-effort 예약 실행, 시작 시 복원/중단 상태 조정/종료 시 task 회수 구현.
+- [x] FastAPI 등록·목록·상세·간격 수정·새로고침·삭제 API 구현.
+- [x] vanilla UI에 관심 주제 목록/등록/상세/간격 설정/출처 포함 변화 요약 화면 구현.
+- [x] 주제 등록, 수동/예약 실행, 변화 해석, 실패 재시도, 저장/재시작, 한계를 설명하는 한국어 인앱 가이드 추가.
+- [x] `tests/test_watchlist.py`, `tests/test_watch_scheduler.py` 및 기존 API/프론트 테스트에 성공, 무변화, 분류, 실패/재시도, 예약, 재시작, 가이드 회귀 추가.
+- [x] 전체 테스트·컴파일·프론트 구문·diff 검사와 Phase 25 회귀를 최종 실행하고 TL 검증 결과 기록.
+
+---
+
 ## 완료 후 Claude가 담당할 작업 (codex 작업 범위 아님)
 - [x] 구현 코드 리뷰 — 발견한 4건(전부 심각도 높음)을 직접 수정: `gpt-researcher` 0.16.0 import 버그 → 버전 상한 고정, DeepSeek-only 설정에서 임베딩 때문에 죽는 문제 → `EMBEDDING` 기본값 추가, `RETRIEVER` 환경변수 충돌로 2섹션 이상 `build_study_document`가 항상 실패하던 버그 → 수정, 한글 주제가 해시 폴더명으로 뭉개지던 `slugify` 버그 → 수정. 낮은 우선순위 2건(SearXNG 빈 검색 결과 조용히 통과, `SEARXNG_SECRET` 무효)은 DESIGN.md/docs/setup.md에 기록만 하고 미수정.
 - [x] 실사용 검증: `generate_toc` → `research_section`(2섹션) → `assemble_study_document`를 실제 DeepSeek + 로컬 SearXNG로 끝까지 실행 ("베이즈 정리", "피보나치 수열"), 섹션당 10~18개 실제 출처 인용 확인. 위 버그들은 전부 이 과정에서 발견됨.

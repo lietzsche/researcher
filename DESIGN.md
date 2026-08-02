@@ -928,3 +928,58 @@ Python의 단일 스레드 이벤트 루프에서는, `await`되는 코루틴 �
 - Phase 18(§21) 완료 후: 코드 리뷰, `MAX_CONCURRENT_RESEARCH` 기본값이 실제로 1로 바뀌었는지, `source_count == 0` 경고 로그가 실제로 남는지 확인. 가능하면 사용자가 같은 유형의 주제로 재테스트해서 검색 실패가 줄었는지 결과 공유받기.
 - Phase 20(§23) 완료 후: 코드 리뷰. 특히 (1) 목차 생성이 정말 빠르게 응답하고 백그라운드에서 완성되는지, (2) 서버 재시작을 흉내낸 뒤 `in_progress`/`generating` 상태가 실제로 풀리고 삭제·재시도가 가능해지는지, (3) 엑셀/zip 다운로드가 한글 slug로 실제로 크래시 없이 되는지, (4) 제어 문자가 섞인 본문으로도 엑셀이 만들어지는지 직접 재현해서 확인.
 - (향후, 별도 설계) 오디오 오버뷰 파이프라인.
+
+## 28. 관심 주제 지속 리서치 (Phase 26)
+
+### 28.1 통합 구조와 저장 모델
+
+관심 주제는 별도 서비스가 아니라 기존 FastAPI 프로세스와
+`RESEARCH_OUTPUT_DIR`에 통합한다. `app/watchlist.py`가 등록·스냅샷·비교를,
+`app/watch_scheduler.py`가 수동/예약 실행을 담당하고 검색은 기존
+`app.research.quick_search()`를 그대로 호출한다. 새 자격 증명이나 유료
+서비스는 필요하지 않다.
+
+저장 위치는 다음과 같으며 `OutputStorage._atomic_write()`를 재사용한다.
+
+```text
+<output-root>/.watchlist/
+├── watches/<slug>.json
+└── runs/<slug>/<run-id>.json
+```
+
+watch 레코드는 `topic`, `slug`, `status`, `interval_minutes`, `next_run_at`,
+`last_error`, `current_run_id`, `previous_run_id`, 생성/수정 시각을 가진다. run은
+수집 시각, URL·제목·요약으로 정규화된 findings, 직전 run과 비교한 changes를
+가진다. UI/API는 최근 run과 바로 이전 run만 노출한다.
+
+### 28.2 새로고침 수명주기와 비교 규칙
+
+상태는 `idle → pending → running → done|error`이다. 수동 실행과 예약 실행은
+동일한 단일 락을 거치므로 한 프로세스 안에서 동시에 검색하지 않는다. 검색
+예외나 URL이 있는 결과가 하나도 없는 경우 `error`로 기록하고 기존 성공
+스냅샷은 유지한다. 사용자는 같은 버튼으로 재시도할 수 있다.
+
+비교는 URL을 안정 식별자로 사용한다. 새 URL은 `added`, 사라진 URL은
+`removed`, 같은 URL에서 제목 또는 요약이 달라지면 `changed`, 어느 집합에도
+차이가 없으면 `no_change`다. 첫 성공은 `initial`이다. 정렬은 URL 기준이라 입력
+순서와 무관하게 결정적이며 모든 항목은 원문 URL을 유지한다.
+
+### 28.3 스케줄링, 재시작, API/UI
+
+`WatchScheduler`는 30초마다 저장된 `next_run_at`을 확인하는 단일 프로세스
+best-effort 스케줄러다. 앱 시작 시 등록과 예약은 디스크에서 복원된다. 재시작
+중이던 실행은 `error`로 바꿔 사용자가 안전하게 재시도할 수 있고, 종료 시 수동
+refresh task도 취소·회수한다. 서버가 꺼져 있던 동안의 실행은 소급하지 않는다.
+
+API는 `/api/watches` 등록/목록, `/api/watches/{slug}` 상세/간격 수정/삭제,
+`/api/watches/{slug}/refresh` 수동 실행을 제공한다. vanilla UI의
+`#/watches`, `#/watches/new`, `#/watches/{slug}`, `#/watches/guide`가 등록,
+수동 실행, 간격 설정, 변화 확인, 한국어 사용 가이드를 제공한다. 외부 출처 링크는
+HTTP(S) 스킴만 활성화한다.
+
+### 28.4 한계
+
+- 다중 프로세스/분산 락/정확히 한 번 실행을 보장하지 않는다.
+- 서버 중단 중 예약 시각을 놓치면 다음 실행까지 기다리거나 수동 실행해야 한다.
+- 라이브 동작은 SearXNG와 선택한 API 제공자가 실제로 실행·접근 가능한지에
+  의존한다. 테스트는 결정적 fake/mock만 사용한다.
