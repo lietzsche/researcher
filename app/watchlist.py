@@ -108,7 +108,7 @@ class WatchStore:
 
     def reconcile_interrupted(self) -> None:
         for watch in self.list():
-            if watch["status"] in {"pending", "running"} and watch["current_run_id"]:
+            if watch["status"] in {"pending", "running"}:
                 watch["status"] = "error"
                 watch["last_error"] = "Refresh interrupted by server restart"
                 self.save(watch)

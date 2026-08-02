@@ -44,7 +44,6 @@ async def test_start_reconciles_interrupted_refresh_and_stop_cancels_worker(
     watch = store.create("Interrupted topic")
     stored = store.get(watch["slug"])
     stored["status"] = "running"
-    stored["current_run_id"] = "unfinished"
     store.save(stored)
     scheduler = WatchScheduler(settings, poll_seconds=3600)
 
@@ -53,6 +52,7 @@ async def test_start_reconciles_interrupted_refresh_and_stop_cancels_worker(
 
     restored = WatchStore(tmp_path).get(watch["slug"])
     assert restored["status"] == "error"
+    assert restored["current_run_id"] is None
     assert "server restart" in restored["last_error"]
 
 
