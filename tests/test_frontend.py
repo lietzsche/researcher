@@ -37,9 +37,11 @@ process.stdout.write(JSON.stringify({{
     assert result.returncode == 0, result.stderr
     rendered = json.loads(result.stdout)
     assert "아직 실행 기록" in rendered["empty"]
-    assert "첫 스냅샷" in rendered["initial"]
-    assert "변경 없음" in rendered["unchanged"]
-    assert "추가 1건" in rendered["changed"]
+    assert "첫 검색 스냅샷" in rendered["initial"]
+    assert "최근 상위 10개" in rendered["initial"]
+    assert "상위 10개 검색 결과 변경 없음" in rendered["unchanged"]
+    assert "정확한 URL 비교" in rendered["unchanged"]
+    assert "검색 결과에 추가 1건" in rendered["changed"]
     assert "https://example.com/source" in rendered["changed"]
     assert 'href="#"' in rendered["unsafe"]
     assert "javascript:" not in rendered["unsafe"]
@@ -70,12 +72,18 @@ process.stdout.write(root.innerHTML);
         "주제 등록",
         "수동 새로고침",
         "예약 새로고침",
-        "추가",
-        "변경",
-        "제거",
-        "변경 없음",
+        "최근 상위 10개 검색 결과",
+        "정확한 URL",
+        "검색 결과에 추가",
+        "제목/검색 요약 변경",
+        "검색 결과에서 제외",
+        "검색 결과 변경 없음",
+        "세계 상태의 변화를 검증한 결과가 아닙니다",
         "실패와 재시도",
+        "다음 간격",
+        "수동 재시도는 즉시",
         "저장과 재시작",
+        "지난 예약 실행을 재생하지 않고",
         "단일 프로세스",
         "SearXNG",
     ):

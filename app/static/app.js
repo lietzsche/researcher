@@ -124,10 +124,10 @@ function watchChangeSummary(run) {
   if (!run) return '<p class="muted">아직 실행 기록이 없습니다.</p>';
   const changes = run.changes || {};
   if (changes.outcome === "initial") {
-    return `<p class="research-notice">첫 스냅샷 · ${run.findings.length}개 결과</p>`;
+    return `<p class="research-notice">첫 검색 스냅샷 · 최근 상위 10개 중 ${run.findings.length}개 결과</p>`;
   }
   if (changes.outcome === "no_change") {
-    return '<p class="research-notice">이전 실행 이후 변경 없음</p>';
+    return '<p class="research-notice">최근 상위 10개 검색 결과 변경 없음 · 정확한 URL 비교</p>';
   }
   const links = (items, label) => items.length
     ? `<section><h3>${label} ${items.length}건</h3><ul>${items.map((item) => {
@@ -136,9 +136,9 @@ function watchChangeSummary(run) {
       }).join("")}</ul></section>`
     : "";
   return `<div class="watch-changes">
-    ${links(changes.added || [], "추가")}
-    ${links(changes.changed || [], "변경")}
-    ${links(changes.removed || [], "제거")}
+    ${links(changes.added || [], "검색 결과에 추가")}
+    ${links(changes.changed || [], "제목/검색 요약 변경")}
+    ${links(changes.removed || [], "검색 결과에서 제외")}
   </div>`;
 }
 
@@ -148,7 +148,7 @@ async function renderWatches() {
   appRoot.innerHTML = `
     <section class="page-heading">
       <div><a class="back-link" href="#/">← 내 주제</a><p class="eyebrow">지속 리서치</p><h1>관심 주제</h1>
-      <p>같은 검색 파이프라인을 주기적으로 실행해 새 변화만 확인합니다.</p></div>
+      <p>최근 상위 10개 검색 결과를 정확한 URL로 비교해 검색 결과의 변화를 확인합니다.</p></div>
       <div class="hero-actions"><a class="button button-ghost" href="#/watches/guide">사용 가이드</a><a class="button button-primary" href="#/watches/new">관심 주제 등록</a></div>
     </section>
     <div class="topic-grid">${watches.length ? watches.map((watch) => `
@@ -182,7 +182,7 @@ async function renderWatch(slug, isPoll = false) {
     <p>${watch.interval_minutes ? `${watch.interval_minutes}분 간격 · 다음 실행 ${escapeHtml(watch.next_run_at || "계산 중")}` : "수동 새로고침"}</p></div>
     <button id="refresh-watch" class="button button-primary" ${busy ? "disabled" : ""}>${busy ? "새로고침 중…" : "지금 새로고침"}</button></section>
     ${watch.last_error ? `<p class="panel research-notice error">${escapeHtml(watch.last_error)} · 다시 시도할 수 있습니다.</p>` : ""}
-    <article class="panel form-panel"><h2>최근 변화</h2>${watchChangeSummary(run)}</article>
+    <article class="panel form-panel"><h2>최근 검색 결과 변화</h2><p class="muted">제목·검색 요약 변화이며, 사실이나 세계 상태의 변화를 검증한 결과는 아닙니다.</p>${watchChangeSummary(run)}</article>
     <article class="panel watch-settings"><h2>자동 새로고침</h2><form id="watch-interval-form" class="inline-form">
       <label>간격(분, 5~10080; 비우면 수동)<input name="interval" type="number" min="5" max="10080" value="${watch.interval_minutes || ""}" ${busy ? "disabled" : ""}></label>
       <button class="button button-ghost" type="submit" ${busy ? "disabled" : ""}>설정 저장</button></form></article>
@@ -214,9 +214,9 @@ function renderWatchGuide() {
     <h2>1. 주제 등록</h2><p>관심 주제 화면에서 검색할 주제를 등록합니다. 같은 이름은 중복 등록되지 않습니다.</p>
     <h2>2. 수동 새로고침</h2><p>상세 화면의 <strong>지금 새로고침</strong>을 누르면 기존 Researcher 검색 파이프라인으로 최신 출처를 수집합니다.</p>
     <h2>3. 예약 새로고침</h2><p>5~10080분 사이의 간격을 저장하면 서버가 실행 중일 때 예약 시각에 새로고침합니다. 값을 비우면 수동 모드입니다.</p>
-    <h2>4. 변화 읽기</h2><p><strong>추가</strong>는 새 URL, <strong>변경</strong>은 같은 URL의 제목·요약 변화, <strong>제거</strong>는 사라진 URL입니다. 모든 항목은 원문 출처 링크를 유지하며, 차이가 없으면 <strong>변경 없음</strong>으로 표시됩니다.</p>
-    <h2>5. 실패와 재시도</h2><p>검색 오류나 빈 결과는 오류 상태로 남고 기존 스냅샷을 보존합니다. 원인을 확인한 뒤 지금 새로고침으로 다시 시도할 수 있습니다.</p>
-    <h2>6. 저장과 재시작</h2><p>등록 정보와 최근·이전 스냅샷은 출력 디렉터리에 원자적으로 저장됩니다. 서버 재시작 시 예약을 복원하며, 중단된 실행은 오류로 표시해 재시도할 수 있습니다.</p>
+    <h2>4. 변화 읽기</h2><p>각 실행의 <strong>최근 상위 10개 검색 결과</strong>를 <strong>정확한 URL</strong>로 비교합니다. <strong>검색 결과에 추가</strong>는 새 URL, <strong>제목/검색 요약 변경</strong>은 같은 URL의 제목·검색 요약 변화, <strong>검색 결과에서 제외</strong>는 이번 상위 결과에서 사라진 URL입니다. 차이가 없으면 <strong>검색 결과 변경 없음</strong>으로 표시합니다. 이는 검색 결과의 변동이며 사실이나 세계 상태의 변화를 검증한 결과가 아닙니다.</p>
+    <h2>5. 실패와 재시도</h2><p>검색 오류나 빈 결과는 오류 상태로 남고 기존 스냅샷을 보존합니다. 예약 실행 실패 후 자동 재시도는 설정한 다음 간격까지 기다리지만, 지금 새로고침을 누른 수동 재시도는 즉시 시작됩니다.</p>
+    <h2>6. 저장과 재시작</h2><p>등록 정보와 최근·이전 스냅샷은 출력 디렉터리에 원자적으로 저장됩니다. 서버 재시작 시 지난 예약 실행을 재생하지 않고 시작 시각부터 다음 간격으로 예약을 다시 잡으며, 중단된 실행은 오류로 표시합니다.</p>
     <h2>알려진 한계</h2><p>스케줄러는 단일 프로세스에서 동작하는 best-effort 방식입니다. 서버가 꺼진 동안 실행하지 않으며, 라이브 결과는 실행 중인 SearXNG와 선택한 API 제공자 접근 상태에 따라 달라집니다.</p>
     </article></section>`;
 }

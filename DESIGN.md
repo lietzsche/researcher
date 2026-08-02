@@ -963,6 +963,9 @@ watch 레코드는 `topic`, `slug`, `status`, `interval_minutes`, `next_run_at`,
 `removed`, 같은 URL에서 제목 또는 요약이 달라지면 `changed`, 어느 집합에도
 차이가 없으면 `no_change`다. 첫 성공은 `initial`이다. 정렬은 URL 기준이라 입력
 순서와 무관하게 결정적이며 모든 항목은 원문 URL을 유지한다.
+비교 대상은 각 실행의 최근 상위 10개 검색 결과이며 exact URL 기준의 검색 결과
+변동만 뜻한다. `changed`도 제목/검색 요약 변화일 뿐, LLM으로 사실 또는 세계
+상태의 변화를 검증하는 의미론적 판정이 아니다.
 
 ### 28.3 스케줄링, 재시작, API/UI
 
@@ -970,6 +973,10 @@ watch 레코드는 `topic`, `slug`, `status`, `interval_minutes`, `next_run_at`,
 best-effort 스케줄러다. 앱 시작 시 등록과 예약은 디스크에서 복원된다. 재시작
 중이던 실행은 `error`로 바꿔 사용자가 안전하게 재시도할 수 있고, 종료 시 수동
 refresh task도 취소·회수한다. 서버가 꺼져 있던 동안의 실행은 소급하지 않는다.
+시작 시 이미 지난 `next_run_at`은 현재 시각+설정 간격으로 재설정하고, 예약
+실행 전에도 다음 시각을 먼저 저장한다. 따라서 실패해도 매 poll마다 재시도하지
+않고 설정 간격을 기다린다. 수동 실행은 즉시 시작하되 같은 방식으로 다음 예약을
+미리 전진시켜 자동 재시도 폭주를 막는다.
 
 API는 `/api/watches` 등록/목록, `/api/watches/{slug}` 상세/간격 수정/삭제,
 `/api/watches/{slug}/refresh` 수동 실행을 제공한다. vanilla UI의
